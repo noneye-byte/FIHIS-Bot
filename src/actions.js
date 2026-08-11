@@ -214,11 +214,13 @@ export async function testSources() {
       localFailed ||= local;
     }
   }
-  // RSSHub answers "Twitter API is not configured" until it gets a session
-  // cookie, which is not obvious from the HTTP error the feed parser sees.
-  if (localFailed && !process.env.TWITTER_AUTH_TOKEN) {
+  // RSSHub answers 503 for every route failure, and for the X route that is
+  // nearly always its `auth_token` cookie — absent, expired or refused.
+  if (localFailed) {
     lines.push(
-      '\nℹ️ The built-in RSSHub needs `TWITTER_AUTH_TOKEN` (the `auth_token` cookie from a logged-in X session) before its X routes work.'
+      process.env.TWITTER_AUTH_TOKEN
+        ? '\nℹ️ The built-in RSSHub returns 503 when its X route fails, usually because the `TWITTER_AUTH_TOKEN` cookie has expired. Replace it with a fresh `auth_token` and restart the container.'
+        : '\nℹ️ The built-in RSSHub needs `TWITTER_AUTH_TOKEN` (the `auth_token` cookie from a logged-in X session) before its X routes work — until then it answers 503.'
     );
   }
 

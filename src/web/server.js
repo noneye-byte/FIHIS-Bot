@@ -375,14 +375,18 @@ async function applyPatch(patch) {
 
 /* --------------------------------------------------------------- handlers */
 
-// RSSHub answers "Twitter API is not configured" until it gets a session
-// cookie, which is not obvious from the HTTP error the feed parser sees.
+/**
+ * Why the built-in RSSHub is failing. It answers 503 for every route error, so
+ * the status alone says nothing; in practice it is almost always its X
+ * credentials, whether missing, expired or refused.
+ */
 function rsshubTokenHint() {
   return {
     source: 'Hint',
     skipped: true,
-    detail:
-      'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything. See https://docs.rsshub.app/deploy/config#x-twitter'
+    detail: process.env.TWITTER_AUTH_TOKEN
+      ? 'The built-in RSSHub answers 503 whenever a route fails, and its X route fails when the auth_token cookie is expired or rejected — X invalidates them often. Log in to X again, copy a fresh auth_token cookie into TWITTER_AUTH_TOKEN, restart the container, then use Restart RSSHub. The container log under [rsshub] carries the underlying error. See https://docs.rsshub.app/deploy/config#x-twitter'
+      : 'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything, and answers 503 until it has one. See https://docs.rsshub.app/deploy/config#x-twitter'
   };
 }
 
@@ -451,7 +455,7 @@ async function handleAction(req, res) {
           localFailed ||= local;
         }
       }
-      if (localFailed && !process.env.TWITTER_AUTH_TOKEN) results.push(rsshubTokenHint());
+      if (localFailed) results.push(rsshubTokenHint());
       return json(res, 200, { results });
     }
 
@@ -493,7 +497,7 @@ async function handleAction(req, res) {
           local,
           ms: Date.now() - startedAt,
           error: err.message,
-          hint: local && !process.env.TWITTER_AUTH_TOKEN ? rsshubTokenHint().detail : null
+          hint: local ? rsshubTokenHint().detail : null
         });
       }
     }

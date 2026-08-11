@@ -29,6 +29,31 @@ export function optionsFrom(config) {
 }
 
 const STATUS_ID = /(?:status|statuses)\/(\d+)/;
+// rss-parser reports an HTTP failure as "Status code 503" and drops the body,
+// which is exactly where RSSHub and Nitter put the reason.
+const HTTP_FAILURE = /status code (\d{3})/i;
+
+/** Re-requests a failed feed just to read its error body. Best effort. */
+async function explainHttpFailure(url, timeoutMs, userAgent) {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': userAgent },
+      signal: AbortSignal.timeout(Math.min(timeoutMs, 10_000))
+    });
+    const body = (await res.text()).slice(0, 8192);
+    const cleaned = body
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleaned ? cleaned.slice(0, 300) : null;
+  } catch {
+    // The feed answered once, so this failing means the detail is simply not
+    // available — never let diagnostics turn into a second error.
+    return null;
+  }
+}
 
 function extractId(item) {
   for (const candidate of [item.link, item.guid, item.id]) {
@@ -62,7 +87,18 @@ export async function fetchTweets(handle, {
   userAgent = DEFAULT_USER_AGENT
 } = {}) {
   if (!url) throw new Error('No RSS URL configured');
-  const feed = await parserFor(timeoutMs, userAgent).parseURL(url);
+
+  let feed;
+  try {
+    feed = await parserFor(timeoutMs, userAgent).parseURL(url);
+  } catch (err) {
+    const status = err.message?.match(HTTP_FAILURE);
+    if (!status) throw err;
+    const detail = await explainHttpFailure(url, timeoutMs, userAgent);
+    const enriched = new Error(detail ? `${err.message} — ${detail}` : err.message);
+    enriched.statusCode = Number(status[1]);
+    throw enriched;
+  }
 
   const items = (feed.items ?? [])
     .map((item) => {

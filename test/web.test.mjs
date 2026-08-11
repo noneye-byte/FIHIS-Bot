@@ -218,7 +218,14 @@ const feedItems = [
   { id: '1900000000000000009', title: 'newest post' },
   { id: '1900000000000000008', title: 'RT @someone: not mine' }
 ];
-const feedServer = http.createServer((_req, res) => {
+const feedServer = http.createServer((rq, res) => {
+  // RSSHub answers 503 with the real reason in the body, which is the only
+  // place it ever appears.
+  if (rq.url.startsWith('/broken')) {
+    res.writeHead(503, { 'Content-Type': 'text/html' });
+    res.end('<html><body><h1>Error</h1><p>Twitter Api is not configured</p></body></html>');
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'application/rss+xml' });
   res.end(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>${feedItems
     .map((i) => `<item><title>${i.title}</title><link>http://x.com/h/status/${i.id}</link>` +
@@ -235,6 +242,13 @@ check('feed test previews the newest items first',
 check('feed test flags what the filters would drop',
   r.json.items[1].isRetweet === true && r.json.items[1].filtered === true,
   JSON.stringify(r.json.items?.[1]));
+
+r = await req('/api/action', { method: 'POST', body: {
+  action: 'feed-test', url: `http://127.0.0.1:${feedServer.address().port}/broken`
+}});
+check('a 503 reports the reason from the response body, not just the status',
+  r.json.ok === false && /503/.test(r.json.error) && /Twitter Api is not configured/i.test(r.json.error),
+  r.json.error);
 
 r = await req('/api/action', { method: 'POST', body: { action: 'feed-test', url: 'javascript:alert(1)' } });
 check('feed test refuses a non-http URL', r.status === 400, `got ${r.status}`);
