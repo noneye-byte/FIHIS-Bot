@@ -2,5 +2,8 @@ node_modules
 config
 .env
 .git
+.github
+test
+unraid
+docker-compose.yml
 *.md
-!README.md

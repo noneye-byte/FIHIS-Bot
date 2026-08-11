@@ -1,0 +1,131 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      # The UI's own JavaScript is syntax-checked inside the test suite.
+      - name: Check server sources parse
+        run: for f in src/*.js src/**/*.js; do node --check "$f"; done
+
+      - name: Validate Unraid template
+        run: |
+          python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse('unraid/fihas-bot.xml')"
+
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name
+        id: img
+        # GHCR rejects uppercase, but GitHub usernames allow it.
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/$owner/fihas-bot" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # Pull requests from forks have no write access; build without pushing.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=FIHAS Bot
+            org.opencontainers.image.description=Posts fxtwitter links to Discord when @F_I_H_A_S tweets
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Attestations add an "unknown/unknown" entry to the GHCR package
+          # listing that confuses Unraid's image picker. Not worth it here.
+          provenance: false
+          sbom: false
+
+      - name: Generate ready-to-use Unraid template
+        # Bakes the real image name into the template so it needs no editing.
+        run: |
+          mkdir -p dist
+          sed 's|<Repository>.*</Repository>|<Repository>${{ steps.img.outputs.name }}:latest</Repository>|' \
+            unraid/fihas-bot.xml > dist/fihas-bot.xml
+          grep -q "${{ steps.img.outputs.name }}" dist/fihas-bot.xml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unraid-template
+          path: dist/fihas-bot.xml
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "${{ steps.img.outputs.name }}:latest"
+            echo '```'
+            echo
+            echo "Platforms: linux/amd64, linux/arm64"
+            echo
+            echo "Tags built:"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "Download the **unraid-template** artifact for an XML with this image name baked in."
+          } >> "$GITHUB_STEP_SUMMARY"

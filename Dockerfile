@@ -4,9 +4,10 @@ RUN apk add --no-cache tini wget
 
 WORKDIR /app
 
-# Copy manifests first so `npm ci` stays cached across source edits.
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+# Copy manifests first so the install layer stays cached across source edits.
+# `npm ci` (not install) so CI builds match the committed lockfile exactly.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY src ./src
 COPY FIHAS.jpg ./FIHAS.jpg

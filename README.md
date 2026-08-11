@@ -15,6 +15,7 @@ needs a restart to take effect.
 
 - [Read this first: how detection works](#read-this-first-how-detection-works)
 - [Quick start](#quick-start)
+- [Building with GitHub Actions](#building-with-github-actions)
 - [Unraid setup](#unraid-setup)
 - [Unraid settings reference](#unraid-settings-reference)
 - [The setup wizard](#the-setup-wizard)
@@ -91,23 +92,71 @@ Then open `http://<host>:8080/` and follow the wizard. For Unraid, see below.
 
 ---
 
-## Unraid setup
+## Building with GitHub Actions
 
-The image is not published to a registry, so build it on the Unraid box once.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs the test suite, then builds and
+publishes a multi-arch image to the GitHub Container Registry. No Docker needed on your Unraid box.
 
-### 1. Copy the project and build the image
-
-Put the project folder somewhere persistent — `/mnt/user/appdata/fihas-bot-src` is a good spot —
-then from the Unraid terminal (**Terminal** button, top right of the web UI):
+### Push
 
 ```sh
-cd /mnt/user/appdata/fihas-bot-src
-docker build -t fihas-bot:latest .
+git add .
+git commit -m "Add setup UI, tests and CI"
+git push
 ```
 
-### 2. Install the template
+The workflow runs automatically on push to `main`. Nothing to configure — it authenticates with the
+built-in `GITHUB_TOKEN`. The resulting image is:
 
-Copy `unraid/fihas-bot.xml` to:
+```
+ghcr.io/noneye-byte/fihas-bot:latest
+```
+
+| Trigger | What happens |
+| --- | --- |
+| Push to `main` | Tests, builds, pushes `:latest` and `:sha-abc1234` |
+| Push a tag `v1.2.3` | Also pushes `:1.2.3` and `:1.2` |
+| Pull request | Tests and builds, but does **not** push |
+| Manual (**Run workflow**) | Same as a branch push |
+
+Images are `linux/amd64` **and** `linux/arm64`, so the same tag works on Unraid, a Synology, or a Pi.
+Layer caching is shared between runs, so repeat builds take well under a minute.
+
+### Make the package pullable
+
+**GHCR packages are private by default**, and Unraid cannot pull a private image without credentials.
+After the first successful run:
+
+**GitHub → your profile → Packages → `fihas-bot` → Package settings → Change visibility → Public**
+
+Prefer to keep it private? Then log in on the Unraid box once, with a
+[personal access token](https://github.com/settings/tokens) that has `read:packages`:
+
+```sh
+echo YOUR_TOKEN | docker login ghcr.io -u YOUR_USERNAME --password-stdin
+```
+
+### Run the tests locally
+
+```sh
+npm ci && npm test
+```
+
+Four suites, 100+ assertions: config/dedupe, the full polling and posting loop against a fake feed
+and a stub Discord client, the web API including auth and input validation, and the setup UI's
+markup and JavaScript.
+
+---
+
+## Unraid setup
+
+### 1. Install the template
+
+Use `unraid/fihas-bot.xml` from this repo — the image name is already set to
+`ghcr.io/noneye-byte/fihas-bot:latest`. (Every Actions run also attaches an identical copy as the
+**unraid-template** artifact, which is handy if you ever rename the repo.)
+
+Put it on the Unraid box at:
 
 ```
 /boot/config/plugins/dockerMan/templates-user/fihas-bot.xml
@@ -119,27 +168,42 @@ Every field below is pre-filled with sensible defaults; you only have to supply 
 Prefer not to use the template? **Add Container** → toggle **Advanced View** and enter the settings
 from the reference table manually.
 
-### 3. Fill in the required fields, then Apply
+<details>
+<summary>Alternative: build on the Unraid box instead</summary>
+
+If you would rather not use GitHub, copy the project to `/mnt/user/appdata/fihas-bot-src` and run
+this from the Unraid **Terminal**, then set **Repository** to `fihas-bot:latest`:
+
+```sh
+cd /mnt/user/appdata/fihas-bot-src
+docker build -t fihas-bot:latest .
+```
+</details>
+
+### 2. Fill in the required fields, then Apply
 
 Only these two are mandatory:
 
 - **Discord Bot Token**
 - **Discord Application ID**
 
-### 4. Get the web UI password
+### 3. Get the web UI password
 
 If you left **Setup UI Password** blank, one is generated on first start and printed to the log.
 **Docker** tab → click the FIHAS-Bot icon → **Logs**, and look for:
 
 ```
-  ┌─────────────────────────────────────────────────────────┐
-  │  Setup UI password (generated — set WEB_PASSWORD to      │
-  │  choose your own):                                       │
-  │      k3Jq-x8Ff2Lm                                        │
-  └─────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │ Setup UI password (generated).                               │
+  │ Set WEB_PASSWORD to choose your own.                         │
+  │                                                              │
+  │     k3Jqx8Ff2Lm7                                             │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
 ```
 
-### 5. Open the WebUI and finish setup
+### 4. Open the WebUI and finish setup
 
 Click the container icon → **WebUI** (or browse to `http://<unraid-ip>:8080/`), log in, and walk
 through the wizard.
@@ -155,7 +219,7 @@ Everything the template configures. **Show more settings** reveals the rows mark
 | Field | Value | Notes |
 | --- | --- | --- |
 | **Name** | `FIHAS-Bot` | |
-| **Repository** | `fihas-bot:latest` | Must match the tag you built in step 1. |
+| **Repository** | `ghcr.io/noneye-byte/fihas-bot:latest` | Published by the build workflow. Already set in the template. |
 | **Network Type** | `bridge` | Host mode also works; then the port mapping is ignored. |
 | **Console shell** | `sh` | Alpine base — `bash` is not installed. |
 | **Privileged** | off | Never needed. |
@@ -206,14 +270,15 @@ and slash commands are the source of truth, so the bot never fights your saved s
 
 ### Updating
 
-```sh
-cd /mnt/user/appdata/fihas-bot-src
-git pull                                  # or re-copy the files
-docker build -t fihas-bot:latest .
-```
+Push your change to `main` and wait for the Actions run to go green, then on Unraid:
 
-Then **Docker** tab → FIHAS-Bot → **Force Update**. Your `/config` survives; the container picks up
-the new image with the same settings.
+**Docker** tab → FIHAS-Bot → **Force Update**
+
+That re-pulls `:latest` and recreates the container. Your `/config` survives, so every setting,
+the password, and the already-posted tweet IDs carry over.
+
+To pin a version instead of tracking `:latest`, tag a release (`git tag v1.0.0 && git push --tags`)
+and set **Repository** to `ghcr.io/noneye-byte/fihas-bot:1.0.0`.
 
 ---
 
@@ -312,15 +377,21 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 ## Layout
 
 ```
-src/index.js          startup, Discord wiring, command registration, lifecycle
-src/commands.js       every /fihas subcommand
-src/poller.js         polling loop, filters, dedupe, posting, backoff
-src/store.js          config persistence, seen-ID tracking
-src/avatar.js         hash-guarded bot profile picture upload
-src/sources/xapi.js   official X API v2
-src/sources/rss.js    RSS/Nitter/RSSHub feeds
-src/web/server.js     setup UI HTTP server, auth, config API, /healthz
-src/web/ui.html       the wizard and dashboard (self-contained)
-unraid/fihas-bot.xml  Unraid container template
-FIHAS.jpg             app icon and bot avatar
+src/index.js               startup, Discord wiring, command registration, lifecycle
+src/commands.js            every /fihas subcommand
+src/poller.js              polling loop, filters, dedupe, posting, backoff
+src/store.js               config persistence, seen-ID tracking
+src/avatar.js              hash-guarded bot profile picture upload
+src/sources/xapi.js        official X API v2
+src/sources/rss.js         RSS/Nitter/RSSHub feeds
+src/web/server.js          setup UI HTTP server, auth, config API, /healthz
+src/web/ui.html            the wizard and dashboard (self-contained)
+test/run.mjs               test runner — npm test
+test/store.test.mjs        config, dedupe, link building, RSS parsing, fallback
+test/poller.test.mjs       full polling loop against a fake feed + stub Discord
+test/web.test.mjs          web API, auth, input validation
+test/ui.test.mjs           setup UI markup and JavaScript
+.github/workflows/build.yml  test, build multi-arch, publish to GHCR
+unraid/fihas-bot.xml       Unraid container template
+FIHAS.jpg                  app icon and bot avatar
 ```

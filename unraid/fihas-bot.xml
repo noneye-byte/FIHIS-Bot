@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>FIHAS-Bot</Name>
-  <Repository>fihas-bot:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/noneye-byte/fihas-bot:latest</Repository>
+  <Registry>https://github.com/noneye-byte/FIHIS-Bot/pkgs/container/fihas-bot</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support/>
-  <Project/>
+  <Support>https://github.com/noneye-byte/FIHIS-Bot/issues</Support>
+  <Project>https://github.com/noneye-byte/FIHIS-Bot</Project>
   <Overview>
     Discord bot that watches an X/Twitter account (default @F_I_H_A_S) and posts an
     fxtwitter.com link to a channel whenever it tweets, pinging whoever you configure.
