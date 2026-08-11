@@ -15,7 +15,21 @@
 
     Click the container icon and choose WebUI to open a step-by-step setup wizard —
     it lists your servers, channels and roles, tests the feed sources, and previews the
-    message. Everything is also controllable from Discord with /fihas slash commands.
+    message. Afterwards the same page becomes a dashboard where every setting can be
+    edited in place, so you never have to re-run the wizard.
+
+    RSSHub is BUILT IN. A private feed bridge runs inside this container, so detection
+    does not depend on public mirrors that the whole internet shares and rate-limits.
+    Nothing extra to install. Turn it off with "Built-in RSSHub" if you would rather
+    use your own.
+
+    Two ways to control it from Discord: /fihas slash commands, and text commands with
+    a prefix (default "!fihas status") for servers where slash commands never appear.
+    Text commands need MESSAGE CONTENT INTENT enabled under Bot in the Discord Developer
+    Portal — without it the bot still runs, it just ignores the prefix.
+
+    Discord bot permissions required: View Channels, Send Messages, Embed Links, Read
+    Message History, and Mention @everyone only if you want @everyone pings.
 
     The setup UI is password protected. Set "Setup UI Password" below, or leave it blank
     and a password is generated and printed in the container log on first start.
@@ -50,6 +64,18 @@
           Description="Password for the setup wizard WebUI. Leave blank to have one generated and printed in the container log on first start."
           Type="Variable" Display="always" Required="false" Mask="true"/>
 
+  <Config Name="Text Command Prefix" Target="COMMAND_PREFIX" Default="!fihas" Mode=""
+          Description="Prefix for text commands, e.g. &quot;!fihas status&quot;. Use this when slash commands do not show up in your server. Requires MESSAGE CONTENT INTENT to be enabled under Bot in the Discord Developer Portal."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Enable Text Commands" Target="PREFIX_ENABLED" Default="true" Mode=""
+          Description="Set to false to ignore the prefix and use slash commands only. When false the bot does not request the Message Content intent at all."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Built-in RSSHub" Target="RSSHUB_ENABLED" Default="true" Mode=""
+          Description="Runs the RSSHub bundled into this image as a private feed source (about 150MB of RAM). Set to false to rely on public mirrors or your own RSSHub instead."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
   <Config Name="X Handle" Target="X_HANDLE" Default="F_I_H_A_S" Mode=""
           Description="Account to watch, without the @."
           Type="Variable" Display="always" Required="false" Mask="false"/>
@@ -67,8 +93,12 @@
           Type="Variable" Display="always" Required="false" Mask="false"/>
 
   <Config Name="RSS Feed URLs" Target="RSS_URLS" Default="" Mode=""
-          Description="Optional. Comma-separated RSS feeds tried in order. Leave blank to use built-in defaults. A self-hosted RSSHub is by far the most reliable option."
+          Description="Optional. Comma-separated RSS feeds tried in order. Leave blank to use the built-in RSSHub plus public mirrors as fallbacks. Setting this replaces that list entirely."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <Config Name="RSSHub X Auth Token" Target="TWITTER_AUTH_TOKEN" Default="" Mode=""
+          Description="Optional. The auth_token cookie from a logged-in X session, used by the built-in RSSHub to read timelines. See https://docs.rsshub.app/deploy/config#x-twitter — X keeps tightening this requirement. Any other RSSHub variable can be added here as an extra variable too."
+          Type="Variable" Display="advanced" Required="false" Mask="true"/>
 
   <Config Name="X API Bearer Token" Target="X_BEARER_TOKEN" Default="" Mode=""
           Description="Optional. Only works on a paid X API plan (Basic or higher); the free tier cannot read timelines. When set, it is tried before RSS."
@@ -81,6 +111,10 @@
   <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp"
           Description="Setup wizard and dashboard. Also serves an unauthenticated /healthz endpoint used for the container health check."
           Type="Port" Display="always" Required="true" Mask="false"/>
+
+  <Config Name="RSSHub Port" Target="1200" Default="1200" Mode="tcp"
+          Description="Optional. The built-in RSSHub. The bot reaches it inside the container without this, so only map it if you want to use the feed bridge from elsewhere on your network. Remove this port if 1200 is already taken."
+          Type="Port" Display="advanced" Required="false" Mask="false"/>
 
   <Config Name="Timezone" Target="TZ" Default="Etc/UTC" Mode=""
           Description="Container timezone, e.g. Europe/London."

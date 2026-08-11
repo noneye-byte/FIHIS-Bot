@@ -2,13 +2,10 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   ChannelType,
-  EmbedBuilder,
   MessageFlags
 } from 'discord.js';
-import { get, update, DEFAULTS } from './store.js';
-import * as poller from './poller.js';
-import * as xapi from './sources/xapi.js';
-import * as rss from './sources/rss.js';
+import { get } from './store.js';
+import * as actions from './actions.js';
 
 export const command = new SlashCommandBuilder()
   .setName('fihas')
@@ -28,9 +25,10 @@ export const command = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('resume').setDescription('Resume posting new tweets'))
   .addSubcommand((s) => s.setName('settings').setDescription('Dump the full configuration'))
   .addSubcommand((s) =>
-    s
-      .setName('test')
-      .setDescription('Try every configured source and report which ones work')
+    s.setName('test').setDescription('Try every configured source and report which ones work')
+  )
+  .addSubcommand((s) =>
+    s.setName('help').setDescription('List every command, including the text-prefix versions')
   )
   .addSubcommandGroup((g) =>
     g
@@ -102,9 +100,7 @@ export const command = new SlashCommandBuilder()
         s
           .setName('add')
           .setDescription('Add an RSS feed URL to the fallback chain')
-          .addStringOption((o) =>
-            o.setName('url').setDescription('RSS feed URL').setRequired(true)
-          )
+          .addStringOption((o) => o.setName('url').setDescription('RSS feed URL').setRequired(true))
       )
       .addSubcommand((s) =>
         s
@@ -115,6 +111,27 @@ export const command = new SlashCommandBuilder()
           )
       )
       .addSubcommand((s) => s.setName('list').setDescription('Show the source chain'))
+  )
+  .addSubcommandGroup((g) =>
+    g
+      .setName('prefix')
+      .setDescription('Text commands, for when slash commands are unavailable')
+      .addSubcommand((s) =>
+        s
+          .setName('set')
+          .setDescription('Change the text-command prefix (e.g. !fihas)')
+          .addStringOption((o) =>
+            o.setName('prefix').setDescription('New prefix, no spaces').setRequired(true)
+          )
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('enabled')
+          .setDescription('Turn text-prefix commands on or off')
+          .addBooleanOption((o) =>
+            o.setName('enabled').setDescription('Listen for the prefix?').setRequired(true)
+          )
+      )
   )
   .addSubcommandGroup((g) =>
     g
@@ -185,381 +202,83 @@ export const command = new SlashCommandBuilder()
       )
   );
 
-const COLOR = 0x1d9bf0;
-
-function fmtTime(iso) {
-  if (!iso) return 'never';
-  return `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
-}
-
-function describePings(config) {
-  const parts = [];
-  if (config.mentionEveryone) parts.push('@everyone');
-  for (const p of config.pings) parts.push(p.type === 'user' ? `<@${p.id}>` : `<@&${p.id}>`);
-  return parts.length ? parts.join(', ') : '_nobody_';
-}
+// Anything that hits the network gets deferred first — Discord kills an
+// interaction that is not answered within three seconds.
+const SLOW = new Set(['check', 'latest', 'test']);
 
 export async function handle(interaction) {
   const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
   const key = group ? `${group}.${sub}` : sub;
 
+  if (SLOW.has(key)) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const payload = await run(interaction, key, sub);
+  return interaction.deferred || interaction.replied
+    ? interaction.editReply(payload)
+    : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+}
+
+function run(interaction, key, sub) {
+  const opts = interaction.options;
+
   switch (key) {
     case 'status':
-      return handleStatus(interaction);
+      return actions.status();
     case 'check':
-      return handleCheck(interaction);
+      return actions.check();
     case 'latest':
-      return handleLatest(interaction);
+      return actions.latest({ ping: opts.getBoolean('ping') ?? false });
     case 'pause':
     case 'resume':
-      return handlePauseResume(interaction, key === 'pause');
+      return actions.pauseResume(key === 'pause');
     case 'settings':
-      return handleSettings(interaction);
+      return actions.settings();
     case 'test':
-      return handleTest(interaction);
+      return actions.testSources();
+    case 'help':
+      return actions.help();
     case 'channel.set':
-      return handleChannelSet(interaction);
+      return actions.setChannel(interaction.guild, opts.getChannel('channel'));
     case 'ping.add':
-    case 'ping.remove':
-      return handlePingChange(interaction, sub === 'add');
+    case 'ping.remove': {
+      const targets = [];
+      const role = opts.getRole('role');
+      const user = opts.getUser('user');
+      if (role) targets.push({ type: 'role', id: role.id });
+      if (user) targets.push({ type: 'user', id: user.id });
+      return actions.pingChange(sub === 'add', targets);
+    }
     case 'ping.list':
-      return reply(interaction, `Currently pinging: ${describePings(get())}`);
+      return actions.pingList();
     case 'ping.clear':
-      await update((c) => {
-        c.pings = [];
-        c.mentionEveryone = false;
-      });
-      return reply(interaction, 'Ping list cleared. New posts will not ping anyone.');
+      return actions.pingClear();
     case 'ping.everyone':
-      return handlePingEveryone(interaction);
+      return actions.pingEveryone(interaction.guild, opts.getBoolean('enabled'));
     case 'source.mode':
-      return handleSourceMode(interaction);
+      return actions.sourceMode(opts.getString('mode'));
     case 'source.add':
     case 'source.remove':
-      return handleSourceChange(interaction, sub === 'add');
+      return actions.sourceChange(sub === 'add', opts.getString('url'));
     case 'source.list':
-      return handleSourceList(interaction);
+      return actions.sourceList();
+    case 'prefix.set':
+      return actions.setPrefix(opts.getString('prefix'));
+    case 'prefix.enabled':
+      return actions.setPrefixEnabled(opts.getBoolean('enabled'));
     case 'set.interval':
-      return handleSetInterval(interaction);
+      return actions.setInterval(opts.getInteger('seconds'));
     case 'set.handle':
-      return handleSetHandle(interaction);
+      return actions.setHandle(opts.getString('handle'));
     case 'set.filter':
-      return handleSetFilter(interaction);
+      return actions.setFilter(opts.getString('type'), opts.getBoolean('enabled'));
     case 'set.link':
-      return handleSetLink(interaction);
+      return actions.setLink(opts.getString('style'));
     case 'set.template':
-      return handleSetTemplate(interaction);
+      return actions.setTemplate(opts.getString('template'));
     default:
-      return reply(interaction, `Unknown command: \`${key}\``);
+      return { content: `Unknown command: \`${key}\`` };
   }
-}
-
-function reply(interaction, content, { ephemeral = true } = {}) {
-  const payload = { content, flags: ephemeral ? MessageFlags.Ephemeral : undefined };
-  return interaction.replied || interaction.deferred
-    ? interaction.editReply({ content })
-    : interaction.reply(payload);
-}
-
-async function handleStatus(interaction) {
-  const config = get();
-  const p = poller.status();
-  const embed = new EmbedBuilder()
-    .setColor(config.paused ? 0x99aab5 : COLOR)
-    .setTitle(`FIHAS Bot — watching @${config.handle}`)
-    .addFields(
-      { name: 'State', value: config.paused ? '⏸️ Paused' : '▶️ Running', inline: true },
-      { name: 'Interval', value: `${config.intervalSeconds}s`, inline: true },
-      {
-        name: 'Channel',
-        value: config.channelId ? `<#${config.channelId}>` : '⚠️ _not set_',
-        inline: true
-      },
-      { name: 'Last check', value: fmtTime(config.lastCheckAt), inline: true },
-      { name: 'Last post', value: fmtTime(config.lastPostAt), inline: true },
-      { name: 'Source used', value: config.lastSourceUsed ?? '_none yet_', inline: true },
-      { name: 'Pinging', value: describePings(config) }
-    );
-
-  if (config.lastError) {
-    embed.addFields({ name: '⚠️ Last error', value: `\`\`\`${config.lastError.slice(0, 900)}\`\`\`` });
-  }
-  if (p.consecutiveFailures > 0) {
-    embed.setFooter({ text: `${p.consecutiveFailures} consecutive failure(s), backing off` });
-  }
-
-  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-}
-
-async function handleCheck(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  try {
-    const result = await poller.checkNow({ force: true });
-    if (result.bootstrap) {
-      return interaction.editReply(
-        `Bootstrapped: recorded ${result.skipped} existing post(s) from \`${result.sourceUsed}\` without posting. New posts from here on will be announced.`
-      );
-    }
-    const bits = [`Checked via \`${result.sourceUsed}\`.`];
-    bits.push(result.posted.length ? `Posted ${result.posted.length} new tweet(s).` : 'Nothing new.');
-    if (result.skipped) bits.push(`${result.skipped} filtered out.`);
-    return interaction.editReply(bits.join(' '));
-  } catch (err) {
-    return interaction.editReply(`Check failed:\n\`\`\`${err.message.slice(0, 1800)}\`\`\``);
-  }
-}
-
-async function handleLatest(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const config = get();
-  const withPing = interaction.options.getBoolean('ping') ?? false;
-  try {
-    const { tweets, sourceUsed } = await poller.fetchFromSources(config);
-    if (!tweets.length) return interaction.editReply('That source returned no posts.');
-
-    const tweet = tweets[0];
-    if (withPing) {
-      await poller.postTweet(config, tweet);
-    } else {
-      // Reuse the posting path but with pings stripped, so /latest can be used
-      // as a "show me the link" without waking the whole server.
-      await poller.postTweet({ ...config, pings: [], mentionEveryone: false }, tweet);
-    }
-    return interaction.editReply(
-      `Posted the latest tweet (\`${tweet.id}\`, via \`${sourceUsed}\`)${withPing ? ' with pings' : ' without pings'}.`
-    );
-  } catch (err) {
-    return interaction.editReply(`Failed:\n\`\`\`${err.message.slice(0, 1800)}\`\`\``);
-  }
-}
-
-async function handlePauseResume(interaction, paused) {
-  await update((c) => {
-    c.paused = paused;
-  });
-  if (!paused) poller.restart();
-  return reply(
-    interaction,
-    paused
-      ? '⏸️ Paused. Polling stops entirely, so anything posted while paused will be announced when you resume.'
-      : '▶️ Resumed. Next check is scheduled.'
-  );
-}
-
-async function handleSettings(interaction) {
-  const config = get();
-  const redacted = { ...config, seen: `[${config.seen.length} ids]` };
-  const json = JSON.stringify(redacted, null, 2);
-  const body =
-    json.length > 1900
-      ? `\`\`\`json\n${json.slice(0, 1900)}\n… truncated\n\`\`\``
-      : `\`\`\`json\n${json}\n\`\`\``;
-  return interaction.reply({ content: body, flags: MessageFlags.Ephemeral });
-}
-
-async function handleTest(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const config = get();
-  const lines = [];
-
-  if (xapi.isConfigured()) {
-    try {
-      const tweets = await xapi.fetchTweets(config.handle, {});
-      lines.push(`✅ \`xapi\` — ${tweets.length} post(s), newest \`${tweets[0]?.id ?? 'n/a'}\``);
-    } catch (err) {
-      lines.push(`❌ \`xapi\` — ${err.message}`);
-    }
-  } else {
-    lines.push('⚪ `xapi` — no X_BEARER_TOKEN set, skipped');
-  }
-
-  for (const url of config.source.rssUrls) {
-    try {
-      const tweets = await rss.fetchTweets(config.handle, { url });
-      lines.push(`✅ \`${url}\` — ${tweets.length} post(s), newest \`${tweets[0].id}\``);
-    } catch (err) {
-      lines.push(`❌ \`${url}\` — ${err.message}`);
-    }
-  }
-
-  return interaction.editReply(lines.join('\n').slice(0, 1900) || 'No sources configured.');
-}
-
-async function handleChannelSet(interaction) {
-  const channel = interaction.options.getChannel('channel');
-  const me = await interaction.guild.members.fetchMe();
-  const perms = channel.permissionsFor(me);
-  if (!perms?.has(PermissionFlagsBits.SendMessages) || !perms?.has(PermissionFlagsBits.ViewChannel)) {
-    return reply(
-      interaction,
-      `I can't post in <#${channel.id}> — grant me **View Channel** and **Send Messages** there first.`
-    );
-  }
-  await update((c) => {
-    c.channelId = channel.id;
-  });
-  return reply(interaction, `New posts will go to <#${channel.id}>.`);
-}
-
-async function handlePingChange(interaction, adding) {
-  const role = interaction.options.getRole('role');
-  const user = interaction.options.getUser('user');
-  if (!role && !user) return reply(interaction, 'Give me a role or a user to add.');
-
-  const targets = [];
-  if (role) targets.push({ type: 'role', id: role.id });
-  if (user) targets.push({ type: 'user', id: user.id });
-
-  await update((c) => {
-    for (const t of targets) {
-      const idx = c.pings.findIndex((p) => p.type === t.type && p.id === t.id);
-      if (adding && idx === -1) c.pings.push(t);
-      if (!adding && idx !== -1) c.pings.splice(idx, 1);
-    }
-  });
-
-  return reply(
-    interaction,
-    `${adding ? 'Added' : 'Removed'}. Now pinging: ${describePings(get())}`
-  );
-}
-
-async function handlePingEveryone(interaction) {
-  const enabled = interaction.options.getBoolean('enabled');
-  if (enabled) {
-    const me = await interaction.guild.members.fetchMe();
-    if (!me.permissions.has(PermissionFlagsBits.MentionEveryone)) {
-      return reply(
-        interaction,
-        "I don't have **Mention @everyone** permission, so that ping would silently do nothing. Grant it first."
-      );
-    }
-  }
-  await update((c) => {
-    c.mentionEveryone = enabled;
-  });
-  return reply(interaction, `@everyone pings are now **${enabled ? 'on' : 'off'}**.`);
-}
-
-async function handleSourceMode(interaction) {
-  const mode = interaction.options.getString('mode');
-  await update((c) => {
-    c.source.mode = mode;
-  });
-  const note =
-    mode === 'xapi' && !process.env.X_BEARER_TOKEN
-      ? '\n⚠️ `X_BEARER_TOKEN` is not set, so this mode will fail until you add it to the container.'
-      : '';
-  poller.restart();
-  return reply(interaction, `Source mode set to \`${mode}\`.${note}`);
-}
-
-async function handleSourceChange(interaction, adding) {
-  const url = interaction.options.getString('url').trim();
-  if (adding && !/^https?:\/\//i.test(url)) {
-    return reply(interaction, 'That does not look like an http(s) URL.');
-  }
-  let changed = false;
-  await update((c) => {
-    const idx = c.source.rssUrls.indexOf(url);
-    if (adding && idx === -1) {
-      c.source.rssUrls.push(url);
-      changed = true;
-    }
-    if (!adding && idx !== -1) {
-      c.source.rssUrls.splice(idx, 1);
-      changed = true;
-    }
-  });
-  if (!changed) return reply(interaction, adding ? 'That URL is already in the list.' : 'That URL was not in the list.');
-  return reply(
-    interaction,
-    `${adding ? 'Added' : 'Removed'} \`${url}\`. Run \`/fihas test\` to check it.`
-  );
-}
-
-async function handleSourceList(interaction) {
-  const config = get();
-  const lines = [`**Mode:** \`${config.source.mode}\``];
-  lines.push(
-    `**X API:** ${process.env.X_BEARER_TOKEN ? 'token present' : '_no token — will be skipped_'}`
-  );
-  lines.push('**RSS chain (tried in order):**');
-  lines.push(
-    config.source.rssUrls.length
-      ? config.source.rssUrls.map((u, i) => `${i + 1}. \`${u}\``).join('\n')
-      : '_empty_'
-  );
-  return reply(interaction, lines.join('\n').slice(0, 1900));
-}
-
-async function handleSetInterval(interaction) {
-  const seconds = interaction.options.getInteger('seconds');
-  await update((c) => {
-    c.intervalSeconds = seconds;
-  });
-  poller.restart();
-  return reply(interaction, `Now checking every **${seconds}s**.`);
-}
-
-async function handleSetHandle(interaction) {
-  const handle = interaction.options.getString('handle').replace(/^@/, '').trim();
-  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
-    return reply(interaction, 'That is not a valid X handle.');
-  }
-  const config = get();
-  const previous = config.handle;
-  await update((c) => {
-    c.handle = handle;
-    if (previous.toLowerCase() !== handle.toLowerCase()) {
-      // Different account means the seen-list and high-water mark are
-      // meaningless; re-bootstrap so we don't dump their backlog.
-      c.seen = [];
-      c.highWaterMark = null;
-      c.bootstrapped = false;
-      c.source.rssUrls = c.source.rssUrls.map((u) =>
-        u.replace(new RegExp(previous, 'gi'), handle)
-      );
-    }
-  });
-  poller.restart();
-  return reply(
-    interaction,
-    `Now watching **@${handle}**. RSS URLs containing \`${previous}\` were rewritten — check them with \`/fihas source list\`. The next check will re-bootstrap without posting the backlog.`
-  );
-}
-
-async function handleSetFilter(interaction) {
-  const type = interaction.options.getString('type');
-  const enabled = interaction.options.getBoolean('enabled');
-  await update((c) => {
-    c.filters[type] = enabled;
-  });
-  return reply(interaction, `${type} will now be **${enabled ? 'posted' : 'ignored'}**.`);
-}
-
-async function handleSetLink(interaction) {
-  const style = interaction.options.getString('style');
-  await update((c) => {
-    c.linkStyle = style;
-  });
-  return reply(interaction, `Links will use **${style === 'vxtwitter' ? 'vxtwitter.com' : 'fxtwitter.com'}**.`);
-}
-
-async function handleSetTemplate(interaction) {
-  const template = interaction.options.getString('template');
-  await update((c) => {
-    c.messageTemplate = template?.trim() || DEFAULTS.messageTemplate;
-  });
-  const preview = poller
-    .buildLink(get(), { handle: get().handle, id: '1234567890123456789' });
-  const rendered = get()
-    .messageTemplate.replaceAll('{pings}', describePings(get()))
-    .replaceAll('{handle}', get().handle)
-    .replaceAll('{link}', preview)
-    .replaceAll('{text}', '(tweet text)');
-  return reply(interaction, `Template ${template ? 'updated' : 'reset'}. Preview:\n\n${rendered}`);
 }
 
 export async function autocomplete(interaction) {

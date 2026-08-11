@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import * as rsshub from './rsshub.js';
 
 const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
@@ -33,6 +34,9 @@ export const DEFAULTS = {
   },
   linkStyle: 'fxtwitter',
   messageTemplate: '{pings} New post from **@{handle}**\n{link}',
+  // Text commands, for servers where slash commands never show up.
+  prefix: '!fihas',
+  prefixEnabled: true,
   // web setup wizard
   guildId: null,
   setupCompleted: false,
@@ -48,6 +52,11 @@ export const DEFAULTS = {
   lastError: null,
   lastSourceUsed: null
 };
+
+// Shared by every writer of the config — the web API, slash commands and prefix
+// commands must agree on what is valid.
+export const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
+export const PREFIX_RE = /^[^\s@#`]{1,16}$/;
 
 let cache = null;
 let writeQueue = Promise.resolve();
@@ -67,6 +76,7 @@ function merge(base, override) {
 export async function load() {
   if (cache) return cache;
   await fs.mkdir(CONFIG_DIR, { recursive: true });
+  let fresh = false;
   try {
     const raw = await fs.readFile(CONFIG_PATH, 'utf8');
     cache = merge(DEFAULTS, JSON.parse(raw));
@@ -75,6 +85,7 @@ export async function load() {
       console.error(`[store] ${CONFIG_PATH} is unreadable, starting from defaults:`, err.message);
     }
     cache = structuredClone(DEFAULTS);
+    fresh = true;
   }
 
   // Env vars win on first boot so a fresh container can be fully configured
@@ -97,6 +108,16 @@ export async function load() {
   }
   if (process.env.RSS_URLS) {
     cache.source.rssUrls = process.env.RSS_URLS.split(',').map((u) => u.trim()).filter(Boolean);
+  } else if (fresh && rsshub.isBundled() && rsshub.isEnabled()) {
+    // The RSSHub bundled into this image only serves us, so it is the most
+    // reliable source available. Public mirrors stay behind it as a fallback.
+    cache.source.rssUrls.unshift(rsshub.localFeedUrl(cache.handle));
+  }
+  if (process.env.COMMAND_PREFIX) {
+    cache.prefix = process.env.COMMAND_PREFIX.trim();
+  }
+  if (process.env.PREFIX_ENABLED !== undefined && process.env.PREFIX_ENABLED !== '') {
+    cache.prefixEnabled = !/^(0|false|no|off)$/i.test(process.env.PREFIX_ENABLED.trim());
   }
 
   // The setup UI is reachable on the LAN, so it always needs a password. If the

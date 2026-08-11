@@ -91,6 +91,20 @@
   .center{text-align:center;padding:34px 0}
   .center h2{margin:0 0 8px}
   .hide{display:none!important}
+  /* collapsible quick-edit sections on the dashboard */
+  details.card{padding:0}
+  details.card>summary{list-style:none;cursor:pointer;padding:15px 20px;display:flex;align-items:center;gap:10px}
+  details.card>summary::-webkit-details-marker{display:none}
+  details.card>summary:hover{background:var(--card-2)}
+  details.card>summary .chev{color:var(--muted);font-size:11px;transition:transform .15s;flex:none}
+  details.card[open]>summary .chev{transform:rotate(90deg)}
+  details.card>summary .st{font-weight:600;font-size:15px}
+  details.card>summary .sv{margin-left:auto;color:var(--muted);font-size:13px;text-align:right;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+  details.card[open]>summary{border-bottom:1px solid var(--line)}
+  details.card .inner{padding:18px 20px 20px}
+  .cmds{font-size:13px;color:var(--muted);line-height:1.9}
+  .cmds code{color:var(--text)}
   @media(max-width:560px){.wrap{padding:18px 14px 60px}.card{padding:17px}}
 </style>
 </head>
@@ -244,6 +258,119 @@ $('loginform').onsubmit = async (e) => {
 
 $('logout').onclick = async () => { await api('/api/logout', {}); location.reload(); };
 
+/* ------------------------------------------------- shared field renderers
+   Used by both the wizard and the dashboard's quick-edit sections, so the two
+   can never drift apart. */
+
+function channelOptions(guild, chosen, name) {
+  if (!guild?.channels.length) return '<div class="hint">No text channels visible to the bot.</div>';
+  return guild.channels.map((c) => `
+    <label class="opt">
+      <input type="radio" name="${name}" value="${c.id}" ${c.id === chosen ? 'checked' : ''} ${c.canPost ? '' : 'disabled'}>
+      <span class="dot" style="background:${c.canPost ? 'var(--ok)' : 'var(--bad)'}"></span>
+      <span class="name">#${esc(c.name)}</span>
+      ${c.announcement ? '<span class="tag">announcement</span>' : ''}
+      ${c.canPost ? '' : '<span class="tag">no permission</span>'}
+    </label>`).join('');
+}
+
+function roleOptions(guild, current) {
+  if (!guild?.roles.length) return '<div class="hint">No assignable roles in this server.</div>';
+  const has = (id) => current.some((p) => p.id === id);
+  return guild.roles.map((r) => `
+    <label class="opt">
+      <input type="checkbox" value="${r.id}" ${has(r.id) ? 'checked' : ''}>
+      <span class="dot" style="background:${r.color === '#000000' ? 'var(--muted)' : r.color}"></span>
+      <span class="name">@${esc(r.name)}</span>
+    </label>`).join('');
+}
+
+function everyoneSwitch(guild, checked, id) {
+  return `<label class="switch">
+    <div><div class="t">Ping @everyone</div>
+      <div class="d">${guild?.canMentionEveryone
+        ? 'Use sparingly.'
+        : '<span style="color:var(--warn)">Bot lacks the Mention Everyone permission — this will do nothing.</span>'}</div></div>
+    <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} ${guild?.canMentionEveryone ? '' : 'disabled'}>
+  </label>`;
+}
+
+function filterSwitches(filters) {
+  return [['retweets', 'Retweets'], ['replies', 'Replies'], ['quotes', 'Quote tweets']].map(([k, t]) =>
+    `<label class="switch"><div class="t">${t}</div>
+      <input type="checkbox" data-f="${k}" ${filters[k] ? 'checked' : ''}></label>`).join('');
+}
+
+function linkStyleSelect(id, current) {
+  return `<select id="${id}">
+    <option value="fxtwitter" ${current === 'fxtwitter' ? 'selected' : ''}>fxtwitter.com</option>
+    <option value="vxtwitter" ${current === 'vxtwitter' ? 'selected' : ''}>vxtwitter.com</option>
+  </select>`;
+}
+
+function modeSelect(id, current) {
+  return `<select id="${id}">
+    <option value="auto" ${current === 'auto' ? 'selected' : ''}>Auto — X API if available, then RSS</option>
+    <option value="rss" ${current === 'rss' ? 'selected' : ''}>RSS mirrors only</option>
+    <option value="xapi" ${current === 'xapi' ? 'selected' : ''}>Official X API only (needs paid token)</option>
+  </select>`;
+}
+
+/* Editable list of feed URLs. Mutates `urls` in place; returns a repaint fn. */
+function urlEditor(box, urls) {
+  const paint = () => {
+    box.innerHTML = urls.map((u, i) =>
+      `<div class="urlrow"><input type="text" value="${esc(u)}" data-i="${i}">
+       <button class="small" data-del="${i}" type="button">Remove</button></div>`).join('')
+      || '<p class="hint" style="margin:0 0 8px">No feeds yet.</p>';
+    box.querySelectorAll('input').forEach((inp) => {
+      inp.oninput = () => { urls[+inp.dataset.i] = inp.value; };
+    });
+    box.querySelectorAll('[data-del]').forEach((b) => {
+      b.onclick = () => { urls.splice(+b.dataset.del, 1); paint(); };
+    });
+  };
+  paint();
+  return paint;
+}
+
+/* The bundled RSSHub's state, plus why it might not be usable. */
+function rsshubBlock() {
+  const h = S.rsshub ?? {};
+  if (!h.bundled) {
+    return `<p class="hint" style="margin:12px 0 0">This image has no built-in RSSHub. Run one yourself
+      and point a feed at it, e.g. <code>http://192.168.1.50:1200/twitter/user/${esc(S.config.handle)}</code></p>`;
+  }
+  const pill = !h.enabled ? '<span class="pill">disabled</span>'
+    : h.ready ? '<span class="pill ok">running</span>'
+    : h.running ? '<span class="pill warn">starting…</span>'
+    : '<span class="pill bad">stopped</span>';
+  return `<div class="result" style="margin-top:12px">${pill}<div class="body">
+    <div class="src">Built-in RSSHub — <code>${esc(h.url ?? '')}</code></div>
+    <div class="det">${h.enabled
+      ? esc(h.lastError ?? 'Runs inside this container, so it is not shared with anyone else.')
+      : 'Turned off with the RSSHUB_ENABLED variable.'}</div></div></div>
+    <div class="row" style="margin-top:10px">
+      <button class="small" type="button" id="usehub">Use built-in feed</button>
+      <button class="small" type="button" id="restarthub">Restart RSSHub</button>
+    </div>`;
+}
+
+function wireRsshubButtons(el, onUse) {
+  const use = el.querySelector('#usehub');
+  if (use) use.onclick = () => onUse(S.rsshub.feedUrl);
+  const restart = el.querySelector('#restarthub');
+  if (restart) restart.onclick = () => run(restart, 'Restarting…', async () => {
+    const r = await api('/api/action', { action: 'rsshub-restart' });
+    flash(msgEl(), r.ok ? 'RSSHub restarting — give it up to a minute.' : r.error, r.ok ? 'good' : 'err');
+  });
+}
+
+/* Whichever message banner is currently on screen. */
+function msgEl() {
+  return $('dash').classList.contains('hide') ? $('werr') : $('dashmsg');
+}
+
 /* -------------------------------------------------------------- wizard */
 const STEPS = ['Welcome', 'Channel', 'Pings', 'Source', 'Options', 'Finish'];
 
@@ -318,18 +445,8 @@ function stepChannel() {
       ? `<label for="gsel">Server</label><select id="gsel">${S.guilds.map((g) =>
           `<option value="${g.id}" ${g.id === guild.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>`
       : '') +
-    `<label>Channel</label><div class="list" id="chlist">${
-      guild.channels.length
-        ? guild.channels.map((c) => `
-          <label class="opt">
-            <input type="radio" name="ch" value="${c.id}" ${c.id === chosen ? 'checked' : ''} ${c.canPost ? '' : 'disabled'}>
-            <span class="dot" style="background:${c.canPost ? 'var(--ok)' : 'var(--bad)'}"></span>
-            <span class="name">#${esc(c.name)}</span>
-            ${c.announcement ? '<span class="tag">announcement</span>' : ''}
-            ${c.canPost ? '' : '<span class="tag">no permission</span>'}
-          </label>`).join('')
-        : '<div class="hint">No text channels visible to the bot.</div>'
-    }</div>
+    `<label>Channel</label>
+    <div class="list" id="chlist">${channelOptions(guild, chosen, 'ch')}</div>
     <p class="hint" style="margin:10px 0 0">Channels the bot cannot post in are disabled. Grant it
       <strong>View Channel</strong> and <strong>Send Messages</strong> there, then reload.</p>`);
 
@@ -351,28 +468,12 @@ function stepChannel() {
 function stepPings() {
   const guild = S.guilds.find((g) => g.id === (draft.guildId ?? S.config.guildId)) ?? S.guilds[0];
   const current = draft.pings ?? S.config.pings;
-  const has = (id) => current.some((p) => p.id === id);
   const everyone = draft.mentionEveryone ?? S.config.mentionEveryone;
 
   const el = card('Who gets pinged?', 'Selected roles are mentioned on every new post. Leave empty for a silent post.',
-    `<label class="switch">
-      <div><div class="t">Ping @everyone</div>
-        <div class="d">${guild.canMentionEveryone
-          ? 'Use sparingly.'
-          : '<span style="color:var(--warn)">Bot lacks the Mention Everyone permission — this will do nothing.</span>'}</div></div>
-      <input type="checkbox" id="evy" ${everyone ? 'checked' : ''} ${guild.canMentionEveryone ? '' : 'disabled'}>
-    </label>
-    <label>Roles</label>
-    <div class="list" id="rolelist">${
-      guild.roles.length
-        ? guild.roles.map((r) => `
-          <label class="opt">
-            <input type="checkbox" value="${r.id}" ${has(r.id) ? 'checked' : ''}>
-            <span class="dot" style="background:${r.color === '#000000' ? 'var(--muted)' : r.color}"></span>
-            <span class="name">@${esc(r.name)}</span>
-          </label>`).join('')
-        : '<div class="hint">No assignable roles in this server.</div>'
-    }</div>`);
+    everyoneSwitch(guild, everyone, 'evy') +
+    `<label>Roles</label>
+    <div class="list" id="rolelist">${roleOptions(guild, current)}</div>`);
 
   nav(el, { onNext: async () => {
     const pings = [...el.querySelectorAll('#rolelist input:checked')].map((i) => ({ type: 'role', id: i.value }));
@@ -391,34 +492,21 @@ function stepSource() {
 
   const el = card('How should the bot detect new posts?',
     'X removed free API access to timelines, so the bot falls back through RSS mirrors. Test them here.',
-    `<label for="mode">Strategy</label>
-    <select id="mode">
-      <option value="auto" ${mode === 'auto' ? 'selected' : ''}>Auto — X API if available, then RSS</option>
-      <option value="rss" ${mode === 'rss' ? 'selected' : ''}>RSS mirrors only</option>
-      <option value="xapi" ${mode === 'xapi' ? 'selected' : ''}>Official X API only (needs paid token)</option>
-    </select>
+    `<label for="mode">Strategy</label>${modeSelect('mode', mode)}
     ${S.hasXToken ? '' : '<p class="hint" style="margin:8px 0 0">No <code>X_BEARER_TOKEN</code> is set, so the X API will be skipped.</p>'}
     <label>RSS feeds — tried in order</label>
     <div id="urls"></div>
     <button class="small" id="addurl" type="button">+ Add feed</button>
-    <p class="hint" style="margin:12px 0 0">Most reliable option: run RSSHub on your own server and point
-      here, e.g. <code>http://192.168.1.50:1200/twitter/user/${esc(S.config.handle)}</code></p>
+    ${rsshubBlock()}
     <div class="results" id="testres"></div>`);
 
   const box = el.querySelector('#urls');
-  const paint = () => {
-    box.innerHTML = urls.map((u, i) =>
-      `<div class="urlrow"><input type="text" value="${esc(u)}" data-i="${i}">
-       <button class="small" data-del="${i}" type="button">Remove</button></div>`).join('');
-    box.querySelectorAll('input').forEach((inp) => {
-      inp.oninput = () => { urls[+inp.dataset.i] = inp.value; };
-    });
-    box.querySelectorAll('[data-del]').forEach((b) => {
-      b.onclick = () => { urls.splice(+b.dataset.del, 1); paint(); };
-    });
-  };
-  paint();
+  const paint = urlEditor(box, urls);
   el.querySelector('#addurl').onclick = () => { urls.push(''); paint(); };
+  wireRsshubButtons(el, (feed) => {
+    if (!urls.includes(feed)) urls.unshift(feed);
+    paint();
+  });
 
   const testBtn = document.createElement('button');
   testBtn.textContent = 'Test these sources';
@@ -460,14 +548,9 @@ function stepOptions() {
       <div><label for="interval">Check every (seconds)</label><input type="number" id="interval" min="30" max="86400" value="${draft.intervalSeconds ?? c.intervalSeconds}"></div>
     </div>
     <label>Post types</label>
-    ${[['retweets','Retweets'],['replies','Replies'],['quotes','Quote tweets']].map(([k,t]) =>
-      `<label class="switch"><div class="t">${t}</div>
-        <input type="checkbox" data-f="${k}" ${(draft.filters?.[k] ?? c.filters[k]) ? 'checked' : ''}></label>`).join('')}
+    ${filterSwitches({ ...c.filters, ...(draft.filters ?? {}) })}
     <label for="link">Link style</label>
-    <select id="link">
-      <option value="fxtwitter" ${(draft.linkStyle ?? c.linkStyle) === 'fxtwitter' ? 'selected' : ''}>fxtwitter.com</option>
-      <option value="vxtwitter" ${(draft.linkStyle ?? c.linkStyle) === 'vxtwitter' ? 'selected' : ''}>vxtwitter.com</option>
-    </select>
+    ${linkStyleSelect('link', draft.linkStyle ?? c.linkStyle)}
     <label for="tpl">Message template</label>
     <textarea id="tpl">${esc(draft.messageTemplate ?? c.messageTemplate)}</textarea>
     <p class="hint" style="margin:6px 0 0">Placeholders: <code>{pings}</code> <code>{handle}</code> <code>{link}</code> <code>{text}</code></p>
@@ -560,15 +643,22 @@ async function save(patch, quiet) {
     S = out.state;
     return true;
   } catch (err) {
-    if (!quiet) flash($('werr'), err.message, 'err');
+    // Whichever banner is on screen — the wizard's and the dashboard's differ.
+    if (!quiet) flash(msgEl(), err.message, 'err');
     return false;
   }
 }
 
 /* ----------------------------------------------------------- dashboard */
+/* Which quick-edit sections are expanded. Kept outside the render so a save,
+   which re-renders everything, does not collapse what you were working in. */
+const openSections = new Set();
+let dashGuildId = null;
+
 function renderDash() {
   $('dash').classList.remove('hide');
   $('wizard').classList.add('hide');
+  $('stepbody').innerHTML = '';
   const c = S.config;
 
   $('dhandle').textContent = '@' + c.handle;
@@ -583,6 +673,8 @@ function renderDash() {
     <div class="stat"><div class="k">Last post</div><div class="v">${when(c.lastPostAt)}</div></div>
     <div class="stat"><div class="k">Interval</div><div class="v">every ${c.intervalSeconds}s</div></div>
     <div class="stat"><div class="k">Source in use</div><div class="v">${esc(c.lastSourceUsed ?? 'none yet')}</div></div>
+    <div class="stat"><div class="k">Commands</div><div class="v">/fihas${c.prefixEnabled
+      ? ` · ${esc(c.prefix)}${S.messageIntent === 'active' ? '' : ' <span class="pill warn">inactive</span>'}` : ''}</div></div>
     ${c.lastError ? `<div class="stat" style="grid-column:1/-1;border-color:#63262b">
       <div class="k">Last error</div><div class="v" style="font-size:13px;color:#ffb4b7">${esc(c.lastError)}</div></div>` : ''}`;
 
@@ -610,34 +702,154 @@ function renderDash() {
   });
 
   $('dashedit').innerHTML = '';
-  $('dashedit').appendChild(dashEditors());
+  for (const build of [secDestination, secPings, secSources, secOptions, secCommands]) {
+    $('dashedit').appendChild(build());
+  }
 }
 
 async function run(btn, busy, fn) {
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = busy;
-  try { await fn(); } catch (err) { flash($('dashmsg'), err.message, 'err'); }
+  try { await fn(); } catch (err) { flash(msgEl(), err.message, 'err'); }
   btn.disabled = false; btn.textContent = label;
 }
 
-function dashEditors() {
+/* ------------------------------------------------- quick-edit sections
+   Every setting the wizard collects, editable in place without re-running it.
+   Each section saves on its own so one bad value cannot block the rest. */
+
+function section(id, title, summary, inner) {
+  const el = document.createElement('details');
+  el.className = 'card';
+  el.open = openSections.has(id);
+  el.innerHTML =
+    `<summary><span class="chev">▶</span><span class="st">${title}</span>
+      <span class="sv">${summary}</span></summary>
+     <div class="inner">${inner}</div>`;
+  el.addEventListener('toggle', () => {
+    if (el.open) openSections.add(id); else openSections.delete(id);
+  });
+  return el;
+}
+
+/* Appends a save button and wires it to `fn`, which returns the patch to send. */
+function saveBar(el, fn, label = 'Save') {
+  const bar = document.createElement('div');
+  bar.className = 'actions';
+  bar.innerHTML = `<button class="primary">${label}</button>`;
+  el.querySelector('.inner').appendChild(bar);
+  const btn = bar.querySelector('button');
+  btn.onclick = () => run(btn, 'Saving…', async () => {
+    const patch = await fn();
+    if (!patch) return;
+    if (await save(patch)) { flash($('dashmsg'), 'Saved.', 'good'); await refresh(); }
+    else flash($('dashmsg'), 'Could not save — check the values.', 'err');
+  });
+  return bar;
+}
+
+function dashGuild() {
+  return S.guilds.find((g) => g.id === (dashGuildId ?? S.config.guildId)) ?? S.guilds[0];
+}
+
+function secDestination() {
   const c = S.config;
-  const el = card('Settings', 'Changes apply immediately.',
+  const guild = dashGuild();
+  const el = section('dest', 'Destination', `#${esc(channelName(c.channelId))}`,
+    (S.guilds.length > 1
+      ? `<label for="d_g">Server</label><select id="d_g">${S.guilds.map((g) =>
+          `<option value="${g.id}" ${g.id === guild?.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>`
+      : '') +
+    `<label>Channel</label>
+     <div class="list">${channelOptions(guild, c.channelId, 'dch')}</div>
+     <p class="hint" style="margin:10px 0 0">Channels the bot cannot post in are disabled.</p>`);
+
+  const sel = el.querySelector('#d_g');
+  if (sel) sel.onchange = () => { dashGuildId = sel.value; renderDash(); };
+
+  saveBar(el, () => {
+    // The bot can be removed from a server while the dashboard is open.
+    if (!guild) { flash($('dashmsg'), 'The bot is not in a server any more.', 'err'); return null; }
+    const picked = el.querySelector('input[name=dch]:checked');
+    if (!picked) { flash($('dashmsg'), 'Pick a channel first.', 'err'); return null; }
+    return { guildId: guild.id, channelId: picked.value };
+  });
+  return el;
+}
+
+function secPings() {
+  const c = S.config;
+  const guild = dashGuild();
+  const el = section('pings', 'Pings', describePings(c),
+    everyoneSwitch(guild, c.mentionEveryone, 'd_evy') +
+    `<label>Roles</label><div class="list">${roleOptions(guild, c.pings)}</div>
+     <p class="hint" style="margin:10px 0 0">Users can be added with
+       <code>/fihas ping add</code> in Discord.</p>`);
+
+  saveBar(el, () => ({
+    // Roles come from the checkboxes; keep any users added from Discord.
+    pings: [
+      ...[...el.querySelectorAll('.list input:checked')].map((i) => ({ type: 'role', id: i.value })),
+      ...c.pings.filter((p) => p.type === 'user')
+    ],
+    mentionEveryone: el.querySelector('#d_evy').checked
+  }));
+  return el;
+}
+
+function secSources() {
+  const c = S.config;
+  const urls = [...c.source.rssUrls];
+  const el = section('src', 'Sources', `${c.source.mode} · ${urls.length} feed(s)`,
+    `<label for="d_mode">Strategy</label>${modeSelect('d_mode', c.source.mode)}
+     ${S.hasXToken ? '' : '<p class="hint" style="margin:8px 0 0">No <code>X_BEARER_TOKEN</code> is set, so the X API is skipped.</p>'}
+     <label>RSS feeds — tried in order</label>
+     <div id="d_urls"></div>
+     <button class="small" id="d_addurl" type="button">+ Add feed</button>
+     ${rsshubBlock()}
+     <div class="results" id="d_testres"></div>`);
+
+  const paint = urlEditor(el.querySelector('#d_urls'), urls);
+  el.querySelector('#d_addurl').onclick = () => { urls.push(''); paint(); };
+  wireRsshubButtons(el, (feed) => {
+    if (!urls.includes(feed)) urls.unshift(feed);
+    paint();
+  });
+
+  const bar = saveBar(el, () => ({
+    sourceMode: el.querySelector('#d_mode').value,
+    rssUrls: urls.filter(Boolean)
+  }));
+
+  const testBtn = document.createElement('button');
+  testBtn.type = 'button';
+  testBtn.textContent = 'Test sources';
+  testBtn.className = 'left';
+  bar.prepend(testBtn);
+  testBtn.onclick = () => run(testBtn, 'Testing…', async () => {
+    // Test what is on screen, not what was last saved.
+    await save({ sourceMode: el.querySelector('#d_mode').value, rssUrls: urls.filter(Boolean) }, true);
+    const { results } = await api('/api/action', { action: 'test' });
+    el.querySelector('#d_testres').innerHTML = results.map(renderResult).join('');
+  });
+  return el;
+}
+
+function secOptions() {
+  const c = S.config;
+  const el = section('opts', 'Posting options',
+    `@${esc(c.handle)} · every ${c.intervalSeconds}s · ${esc(c.linkStyle)}`,
     `<div class="row">
       <div><label for="e_handle">X account</label><input type="text" id="e_handle" value="${esc(c.handle)}"></div>
       <div><label for="e_int">Check every (seconds)</label><input type="number" id="e_int" min="30" max="86400" value="${c.intervalSeconds}"></div>
     </div>
     <label>Post types</label>
-    ${[['retweets','Retweets'],['replies','Replies'],['quotes','Quote tweets']].map(([k,t]) =>
-      `<label class="switch"><div class="t">${t}</div>
-        <input type="checkbox" data-f="${k}" ${c.filters[k] ? 'checked' : ''}></label>`).join('')}
+    ${filterSwitches(c.filters)}
     <label for="e_link">Link style</label>
-    <select id="e_link">
-      <option value="fxtwitter" ${c.linkStyle === 'fxtwitter' ? 'selected' : ''}>fxtwitter.com</option>
-      <option value="vxtwitter" ${c.linkStyle === 'vxtwitter' ? 'selected' : ''}>vxtwitter.com</option>
-    </select>
+    ${linkStyleSelect('e_link', c.linkStyle)}
     <label for="e_tpl">Message template</label>
     <textarea id="e_tpl">${esc(c.messageTemplate)}</textarea>
+    <p class="hint" style="margin:6px 0 0">Placeholders: <code>{pings}</code> <code>{handle}</code> <code>{link}</code> <code>{text}</code></p>
     <div class="preview" id="e_prev">…</div>`);
 
   const tpl = el.querySelector('#e_tpl');
@@ -648,25 +860,60 @@ function dashEditors() {
     } catch {}
   };
   tpl.oninput = () => { clearTimeout(tpl._t); tpl._t = setTimeout(doPreview, 300); };
-  doPreview();
+  if (el.open) doPreview(); else el.addEventListener('toggle', doPreview, { once: true });
 
-  const bar = document.createElement('div');
-  bar.className = 'actions';
-  bar.innerHTML = '<button class="primary" id="esave">Save changes</button>';
-  el.appendChild(bar);
-  bar.querySelector('#esave').onclick = () => run(bar.querySelector('#esave'), 'Saving…', async () => {
+  saveBar(el, () => {
     const filters = {};
     el.querySelectorAll('[data-f]').forEach((i) => { filters[i.dataset.f] = i.checked; });
-    const ok = await save({
+    return {
       handle: el.querySelector('#e_handle').value,
       intervalSeconds: el.querySelector('#e_int').value,
       linkStyle: el.querySelector('#e_link').value,
       messageTemplate: tpl.value,
       filters
-    });
-    if (ok) { flash($('dashmsg'), 'Saved.', 'good'); await refresh(); }
-    else flash($('dashmsg'), 'Could not save — check the values.', 'err');
+    };
   });
+  return el;
+}
+
+function secCommands() {
+  const c = S.config;
+  const p = esc(c.prefix);
+  const intent = {
+    active: '<div class="msg show good">Discord is sending message text — prefix commands are live.</div>',
+    denied: `<div class="msg show err">Discord refused the <strong>Message Content</strong> intent, so the bot
+      cannot read messages. Enable <strong>MESSAGE CONTENT INTENT</strong> under <em>Bot → Privileged Gateway
+      Intents</em> in the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Developer
+      Portal</a>, then restart the container.</div>`,
+    off: c.prefixEnabled
+      ? '<div class="msg show info">Restart the container to start listening — the message intent is only requested at startup.</div>'
+      : '<div class="msg show info">Prefix commands are off. Turn them on and restart the container to use them.</div>'
+  }[S.messageIntent ?? 'off'];
+
+  const el = section('cmds', 'Commands',
+    c.prefixEnabled ? `/fihas · ${p}` : '/fihas only',
+    `${intent}
+     <label class="switch"><div><div class="t">Text-prefix commands</div>
+       <div class="d">A fallback for servers where <code>/fihas</code> never appears.</div></div>
+       <input type="checkbox" id="d_pfxon" ${c.prefixEnabled ? 'checked' : ''}></label>
+     <label for="d_pfx">Prefix</label>
+     <input type="text" id="d_pfx" value="${p}" maxlength="16">
+     <p class="hint" style="margin:6px 0 0">No spaces, <code>@</code>, <code>#</code> or backticks.
+       Examples: <code>!fihas</code>, <code>!f</code>, <code>fihas!</code></p>
+     <div class="cmds" style="margin-top:14px">
+       <code>${p} help</code> · <code>${p} status</code> · <code>${p} check</code> · <code>${p} test</code><br>
+       <code>${p} latest [ping]</code> · <code>${p} pause</code> · <code>${p} resume</code><br>
+       <code>${p} channel set #channel</code> · <code>${p} ping add @role</code><br>
+       <code>${p} source mode auto|xapi|rss</code> · <code>${p} source add &lt;url&gt;</code><br>
+       <code>${p} set interval 120</code> · <code>${p} set handle name</code>
+     </div>
+     <p class="hint" style="margin:12px 0 0">Prefix commands need <strong>Manage Server</strong>, same as the
+       slash commands, and their replies are visible to the channel.</p>`);
+
+  saveBar(el, () => ({
+    prefix: el.querySelector('#d_pfx').value,
+    prefixEnabled: el.querySelector('#d_pfxon').checked
+  }));
   return el;
 }
 

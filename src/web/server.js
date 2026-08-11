@@ -3,10 +3,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { get, update, DEFAULTS } from '../store.js';
+import { get, update, DEFAULTS, HANDLE_RE, PREFIX_RE } from '../store.js';
 import * as poller from '../poller.js';
+import * as rsshub from '../rsshub.js';
 import * as xapi from '../sources/xapi.js';
 import * as rss from '../sources/rss.js';
+import { runtime } from '../runtime.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -144,6 +146,9 @@ function publicState() {
     hasXToken: Boolean(process.env.X_BEARER_TOKEN),
     guilds: collectGuilds(),
     poller: poller.status(),
+    rsshub: { ...rsshub.status(), feedUrl: rsshub.localFeedUrl(config.handle) },
+    // 'active' | 'denied' | 'off' — whether prefix commands can read message text.
+    messageIntent: runtime.messageIntent,
     config: {
       handle: config.handle,
       guildId: config.guildId,
@@ -156,6 +161,8 @@ function publicState() {
       filters: config.filters,
       linkStyle: config.linkStyle,
       messageTemplate: config.messageTemplate,
+      prefix: config.prefix,
+      prefixEnabled: config.prefixEnabled,
       setupCompleted: config.setupCompleted,
       bootstrapped: config.bootstrapped,
       lastCheckAt: config.lastCheckAt,
@@ -168,8 +175,6 @@ function publicState() {
 }
 
 /* ----------------------------------------------------------- config patch */
-
-const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 
 async function applyPatch(patch) {
   const errors = [];
@@ -266,6 +271,17 @@ async function applyPatch(patch) {
       else c.messageTemplate = template;
     }
 
+    if (patch.prefix !== undefined) {
+      const prefix = String(patch.prefix).trim();
+      if (!PREFIX_RE.test(prefix)) {
+        errors.push('Prefix must be 1-16 characters with no spaces, @, # or backticks.');
+      } else {
+        c.prefix = prefix;
+      }
+    }
+
+    if (patch.prefixEnabled !== undefined) c.prefixEnabled = Boolean(patch.prefixEnabled);
+
     if (patch.setupCompleted !== undefined) c.setupCompleted = Boolean(patch.setupCompleted);
   });
 
@@ -323,15 +339,42 @@ async function handleAction(req, res) {
       } else {
         results.push({ source: 'X API', skipped: true, detail: 'No X_BEARER_TOKEN set' });
       }
+      let localFailed = false;
       for (const url of config.source.rssUrls) {
+        const local = rsshub.isLocalUrl(url);
+        const source = local ? `${url} (built-in RSSHub)` : url;
         try {
           const tweets = await rss.fetchTweets(config.handle, { url });
-          results.push({ source: url, ok: true, detail: `${tweets.length} post(s), newest ${tweets[0].id}` });
+          results.push({ source, ok: true, detail: `${tweets.length} post(s), newest ${tweets[0].id}` });
         } catch (err) {
-          results.push({ source: url, ok: false, detail: err.message });
+          results.push({ source, ok: false, detail: err.message });
+          localFailed ||= local;
         }
       }
+      // RSSHub answers "Twitter API is not configured" until it gets a session
+      // cookie, which is not obvious from the HTTP error the feed parser sees.
+      if (localFailed && !process.env.TWITTER_AUTH_TOKEN) {
+        results.push({
+          source: 'Hint',
+          skipped: true,
+          detail:
+            'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything. See https://docs.rsshub.app/deploy/config#x-twitter'
+        });
+      }
       return json(res, 200, { results });
+    }
+
+    case 'rsshub-restart': {
+      const state = rsshub.restart();
+      return json(res, 200, {
+        ok: state.bundled && state.enabled,
+        rsshub: state,
+        error: !state.bundled
+          ? 'No RSSHub is bundled in this image.'
+          : !state.enabled
+            ? 'RSSHub is disabled by RSSHUB_ENABLED.'
+            : null
+      });
     }
 
     case 'check': {

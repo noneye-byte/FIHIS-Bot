@@ -4,7 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-const SUITES = ['store.test.mjs', 'poller.test.mjs', 'web.test.mjs', 'ui.test.mjs'];
+const SUITES = [
+  'store.test.mjs',
+  'poller.test.mjs',
+  'prefix.test.mjs',
+  'web.test.mjs',
+  'ui.test.mjs'
+];
 
 let failed = 0;
 

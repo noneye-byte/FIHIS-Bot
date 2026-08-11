@@ -20,13 +20,19 @@ for (const opt of json.options) {
 }
 check('command serialises', json.name === 'fihas');
 check('option count within Discord limit of 25', json.options.length <= 25, `${json.options.length}`);
-check('all subcommands present', subs.length === 22, `${subs.length} subcommands`);
+check('all subcommands present', subs.length === 25, `${subs.length} subcommands`);
+for (const expected of ['status', 'help', 'channel set', 'ping everyone', 'source mode',
+  'prefix set', 'prefix enabled', 'set interval', 'set template']) {
+  check(`subcommand "${expected}" registered`, subs.includes(expected), subs.join(', '));
+}
 
 /* --- defaults ------------------------------------------------------------ */
 const config = await store.load();
 check('default handle', config.handle === 'F_I_H_A_S');
 check('starts unbootstrapped', config.bootstrapped === false);
 check('web password generated', typeof config.webPassword === 'string' && config.webPassword.length >= 12);
+check('prefix commands on by default', config.prefixEnabled === true && config.prefix === '!fihas',
+  `${config.prefix} / ${config.prefixEnabled}`);
 
 /* --- dedupe / high-water mark -------------------------------------------- */
 store.markSeen(config, '1000000000000000005');

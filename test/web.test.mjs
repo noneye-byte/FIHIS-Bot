@@ -99,6 +99,17 @@ check('@everyone role excluded', !g.roles.some((x) => x.id === 'g1'));
 check('managed role excluded', !g.roles.some((x) => x.id === 'r2'));
 check('normal role present', g.roles.some((x) => x.id === 'r1'));
 check('password never exposed in state', !JSON.stringify(r.json).includes(PASSWORD));
+check('state carries the prefix settings',
+  r.json.config.prefix === '!fihas' && r.json.config.prefixEnabled === true);
+check('state reports the message intent', typeof r.json.messageIntent === 'string', r.json.messageIntent);
+check('state reports the bundled rsshub', r.json.rsshub.bundled === false
+  && r.json.rsshub.feedUrl.includes('/twitter/user/'), JSON.stringify(r.json.rsshub));
+
+/* --- 6b. quick-edit patches the dashboard sends ------------------------------- */
+r = await req('/api/config', { method: 'POST', body: { prefix: '!f', prefixEnabled: false } });
+check('prefix settings editable', r.status === 200
+  && r.json.state.config.prefix === '!f' && r.json.state.config.prefixEnabled === false);
+await req('/api/config', { method: 'POST', body: { prefix: '!fihas', prefixEnabled: true } });
 
 /* --- 7. valid config patch ------------------------------------------------------ */
 r = await req('/api/config', { method: 'POST', body: {
@@ -125,6 +136,10 @@ r = await req('/api/config', { method: 'POST', body: { pings: [{ type: 'role', i
 check('malformed ping id dropped', r.status === 200 && r.json.state.config.pings.length === 0);
 r = await req('/api/config', { method: 'POST', body: { sourceMode: 'nonsense' } });
 check('unknown source mode rejected', r.status === 400);
+r = await req('/api/config', { method: 'POST', body: { prefix: 'has spaces' } });
+check('prefix with a space rejected', r.status === 400);
+r = await req('/api/config', { method: 'POST', body: { prefix: '@fihas' } });
+check('prefix that looks like a mention rejected', r.status === 400);
 
 /* --- 9. rejected patches leave state intact ----------------------------------------- */
 r = await req('/api/state');

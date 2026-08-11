@@ -42,6 +42,19 @@ for (const endpoint of ['/api/session', '/api/login', '/api/logout', '/api/state
   check(`calls ${endpoint}`, html.includes(endpoint));
 }
 
+/* --- dashboard quick-edit sections -------------------------------------------
+   Every setting the wizard collects must also be reachable from the dashboard,
+   which is the only way to change one without re-running setup. */
+const js = scripts.join('\n');
+for (const builder of ['secDestination', 'secPings', 'secSources', 'secOptions', 'secCommands']) {
+  check(`${builder}() defined`, js.includes(`function ${builder}(`));
+  check(`${builder}() rendered on the dashboard`, new RegExp(`\\b${builder}\\b[,\\]]`).test(js));
+}
+check('sections save their own patch', js.includes('function saveBar('));
+check('open sections survive a re-render', js.includes('openSections'));
+check('prefix is editable', js.includes('prefixEnabled:') && js.includes('#d_pfx'));
+check('built-in rsshub is surfaced', js.includes('rsshub-restart') && js.includes('function rsshubBlock('));
+
 /* --- output escaping -------------------------------------------------------
    Guild, channel and role names come from Discord and land in innerHTML, so
    the escape helper must cover the dangerous characters. */

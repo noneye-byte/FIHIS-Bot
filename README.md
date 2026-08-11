@@ -4,8 +4,11 @@ Watches [@F_I_H_A_S](https://x.com/F_I_H_A_S) and drops an **fxtwitter.com** lin
 channel whenever they post, pinging whoever you configure.
 
 Runs as a Docker container on Unraid. Set it up through a **web wizard** (click WebUI on the
-container) or with **`/fihas` slash commands** in Discord — both drive the same config, and neither
-needs a restart to take effect.
+container), with **`/fihas` slash commands**, or with **`!fihas` text commands** in Discord — all
+three drive the same config, and none of them needs a restart to take effect.
+
+**RSSHub is built into the image**, so detection does not depend on public mirrors that everyone
+else is hammering. Nothing extra to install.
 
 <p align="center"><img src="FIHAS.jpg" width="140" alt="FIHAS Bot"></p>
 
@@ -14,12 +17,14 @@ needs a restart to take effect.
 ## Contents
 
 - [Read this first: how detection works](#read-this-first-how-detection-works)
+- [Required permissions](#required-permissions)
 - [Quick start](#quick-start)
 - [Building with GitHub Actions](#building-with-github-actions)
 - [Unraid setup](#unraid-setup)
 - [Unraid settings reference](#unraid-settings-reference)
 - [The setup wizard](#the-setup-wizard)
-- [Slash commands](#slash-commands)
+- [The dashboard: editing settings later](#the-dashboard-editing-settings-later)
+- [Commands](#commands)
 - [Behaviour worth knowing](#behaviour-worth-knowing)
 - [Troubleshooting](#troubleshooting)
 
@@ -32,29 +37,109 @@ X shut off free API access to user timelines. There is no free, officially suppo
 
 | Source | Cost | Reliability |
 | --- | --- | --- |
+| **Built-in RSSHub** | Free, ships in the image | Good. Private to your container, so nobody else can exhaust its rate limit. |
 | **X API** (`X_BEARER_TOKEN`) | Paid — Basic tier, ~$200/mo | Excellent. The free tier **cannot** do this and returns 403. |
-| **RSS mirrors** (RSSHub / Nitter) | Free | Varies. Public instances get rate-limited and go down. |
+| **Public RSS mirrors** (rsshub.app / Nitter) | Free | Varies. Shared by the whole internet; they get rate-limited and go down. |
 
-By default the bot runs in `auto` mode: it uses the X API if you give it a token, otherwise it walks
-the RSS list in order until one responds. If a feed dies it transparently moves to the next, and
+By default the bot runs in `auto` mode: it uses the X API if you give it a token, then walks the RSS
+list in order until one responds. If a feed dies it transparently moves to the next, and
 `/fihas test` (or **Test sources** in the web UI) shows you which are alive right now.
 
-### Recommended: run your own RSSHub
+### The built-in RSSHub
 
-Public mirrors are shared by the entire internet and are the single most likely thing to break.
-A self-hosted RSSHub only serves you. It is bundled here behind a compose profile:
+This image is built **on top of** the official [RSSHub](https://docs.rsshub.app) image, and the bot
+supervises RSSHub as a child process: it starts with the container, restarts with backoff if it
+crashes, and logs under `[rsshub]`. On a fresh install its feed is placed first in the chain:
 
-```sh
-docker compose --profile rsshub up -d
+```
+http://127.0.0.1:1200/twitter/user/F_I_H_A_S
 ```
 
-Then point the bot at `http://<your-server-ip>:1200/twitter/user/F_I_H_A_S` on the **Source** step
-of the wizard, and remove the public defaults.
+That address is inside the container, so nothing needs publishing and nothing else on your network
+can reach it. This is what makes it Unraid-friendly — Unraid runs one container per template, so a
+compose sidecar was never an option there.
 
-> RSSHub's Twitter route needs credentials of its own (`TWITTER_AUTH_TOKEN`, an `auth_token` cookie
-> from a logged-in session). X keeps tightening this, so check the current
-> [RSSHub docs](https://docs.rsshub.app/deploy/config#x-twitter) — that requirement is outside this
-> bot's control.
+| | |
+| --- | --- |
+| **Cost** | ~150MB extra RAM, ~600MB extra image size |
+| **Turn it off** | `RSSHUB_ENABLED=false` — the bot then uses the other feeds in the list |
+| **Reach it from elsewhere** | Publish port `1200` (an *Advanced* row in the Unraid template) |
+| **Restart it by hand** | **Restart RSSHub** under **Sources** in the web UI |
+| **Configure it** | Any RSSHub environment variable set on the container is passed straight through |
+
+> **It still needs X credentials.** RSSHub's X route requires `TWITTER_AUTH_TOKEN` — the
+> `auth_token` cookie from a logged-in X session. X keeps tightening this, so check the current
+> [RSSHub docs](https://docs.rsshub.app/deploy/config#x-twitter). That requirement is outside this
+> bot's control, which is why the public mirrors stay in the chain as fallbacks.
+
+Upgrading from an older version? Your saved feed list is left alone. Add the built-in one with
+**Use built-in feed** under **Sources** in the web UI.
+
+---
+
+## Required permissions
+
+### Discord — bot permissions
+
+Granted by the invite link. The wizard generates one for you; this is the same link with
+`permissions=277025770496`:
+
+```
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277025770496&scope=bot%20applications.commands
+```
+
+| Permission | Needed for | Required? |
+| --- | --- | --- |
+| **View Channels** | Seeing the target channel at all | **Yes** |
+| **Send Messages** | Posting the tweet link | **Yes** |
+| **Embed Links** | Letting the fxtwitter link unfurl into a preview | **Yes** — without it you get a bare URL |
+| **Read Message History** | Replying to a text command | Only for `!fihas` commands |
+| **Send Messages in Threads** | Posting to a thread target | Only if the channel is a thread |
+| **Mention @everyone** | `@everyone` pings, **and** pinging roles that are not "mentionable" | Only if you use those |
+| **Manage Webhooks** | — | Never. Don't grant it. |
+| **Administrator** | — | Never. Don't grant it. |
+
+Both scopes matter: `bot` gets it into the server, `applications.commands` is what lets `/fihas`
+register. **Re-inviting with the same link is how you fix missing permissions** — it updates the
+existing bot rather than adding a second one.
+
+Per-channel overrides beat server-wide grants, which is why the wizard greys out channels the bot
+cannot post in: that check is done live against the real permissions.
+
+### Discord — privileged intents
+
+In the [Developer Portal](https://discord.com/developers/applications) → your app → **Bot** →
+**Privileged Gateway Intents**:
+
+| Intent | Needed for | Required? |
+| --- | --- | --- |
+| **Message Content** | Reading `!fihas ...` text commands | Only for text commands |
+| Server Members | — | No |
+| Presence | — | No |
+
+Turn Message Content **on** if you want text commands. Without it the bot starts anyway, logs what
+to fix, and the web UI shows the same warning under **Commands** — `/fihas` and the web UI are
+unaffected. Set `PREFIX_ENABLED=false` if you would rather not grant it; the bot then never asks
+for it.
+
+### Discord — who may run commands
+
+Both `/fihas` and `!fihas` require **Manage Server**. For slash commands you can change that in
+**Server Settings → Integrations → FIHAS Bot**; text commands always check Manage Server.
+
+### Container and host
+
+| Thing | Value | Notes |
+| --- | --- | --- |
+| **Privileged mode** | Not needed | Leave it off. |
+| **`/config` volume** | read-write | The only writable path the bot needs. |
+| **Host path ownership** | writable by the container | The container runs as **root**, so the usual Unraid `nobody:users` appdata share works untouched. |
+| **Port 8080/tcp** | inbound | Web UI and `/healthz`. Change the host side if it clashes. |
+| **Port 1200/tcp** | optional | Bundled RSSHub. Only publish it if you want to use the feed bridge elsewhere. |
+| **Outbound network** | required | `discord.com` + `gateway.discord.gg` (bot), `x.com` (RSSHub/API), any RSS mirrors you list. |
+| **Capabilities** | none added | No `--cap-add`, no host networking, no device access. |
+
+The bot needs no access to your array, your other containers, or the Docker socket.
 
 ---
 
@@ -65,7 +150,9 @@ of the wizard, and remove the public defaults.
 1. [Developer Portal](https://discord.com/developers/applications) → **New Application**.
 2. **Bot** → **Reset Token** → copy it. This is `DISCORD_TOKEN`. Treat it like a password.
 3. **General Information** → copy the **Application ID**. This is `DISCORD_CLIENT_ID`.
-4. No privileged intents are needed — leave them all off.
+4. **Bot** → **Privileged Gateway Intents** → turn on **MESSAGE CONTENT INTENT** if you want
+   `!fihas` text commands. Leave the other two off. See
+   [Required permissions](#required-permissions).
 
 ### 2. Invite it to your server
 
@@ -75,8 +162,8 @@ Replace `YOUR_CLIENT_ID` and open in a browser (the wizard also generates this l
 https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277025770496&scope=bot%20applications.commands
 ```
 
-That grants: View Channels, Send Messages, Embed Links, Mention Everyone, Send Messages in Threads.
-Drop **Mention Everyone** if you never plan to use `@everyone`.
+That grants: View Channels, Send Messages, Embed Links, Read Message History, Mention Everyone,
+Send Messages in Threads. Drop **Mention Everyone** if you never plan to use `@everyone`.
 
 ### 3. Run it
 
@@ -122,6 +209,12 @@ ghcr.io/noneye-byte/fihas-bot:latest
 Images are `linux/amd64` **and** `linux/arm64`, so the same tag works on Unraid, a Synology, or a Pi.
 Layer caching is shared between runs, so repeat builds take well under a minute.
 
+The image is built **on top of `diygod/rsshub`**, which is what puts a private feed bridge inside the
+container. That makes it around 700MB — most of it the shared RSSHub base, pulled once. Pin a
+different base with `--build-arg RSSHUB_IMAGE=diygod/rsshub:<tag>` if you would rather not track
+their `latest`. The build fails loudly if RSSHub ever moves its entrypoint, rather than shipping a
+container whose feed bridge silently never starts.
+
 ### Make the package pullable
 
 **GHCR packages are private by default**, and Unraid cannot pull a private image without credentials.
@@ -142,9 +235,9 @@ echo YOUR_TOKEN | docker login ghcr.io -u YOUR_USERNAME --password-stdin
 npm ci && npm test
 ```
 
-Four suites, 100+ assertions: config/dedupe, the full polling and posting loop against a fake feed
-and a stub Discord client, the web API including auth and input validation, and the setup UI's
-markup and JavaScript.
+Five suites, 150+ assertions: config/dedupe, the full polling and posting loop against a fake feed
+and a stub Discord client, text-command parsing and dispatch against a stub guild, the web API
+including auth and input validation, and the setup UI's markup and JavaScript.
 
 ---
 
@@ -231,6 +324,7 @@ Everything the template configures. **Show more settings** reveals the rows mark
 | Field | Container port | Default host port | Notes |
 | --- | --- | --- | --- |
 | **WebUI Port** | `8080` | `8080` | Setup wizard, dashboard, and the unauthenticated `/healthz` used for the container health dot. Change the **host** side if 8080 is already taken — Unraid itself does not use it, but plenty of containers do. |
+| **RSSHub Port** | `1200` | `1200` | *Advanced, optional.* The built-in RSSHub. The bot reaches it over `127.0.0.1` inside the container, so **you can delete this row** — publish it only to use the feed bridge from elsewhere on your network. |
 
 ### Path
 
@@ -250,16 +344,25 @@ spamming, but your channel, pings, and password all reset.
 | **Discord Application ID** | `DISCORD_CLIENT_ID` | **Yes** | — | General Information → Application ID. |
 | **Discord Server ID** | `DISCORD_GUILD_ID` | No | — | Strongly recommended: slash commands register **instantly** instead of taking up to an hour. Enable Developer Mode in Discord, right-click your server → Copy Server ID. |
 | **Setup UI Password** | `WEB_PASSWORD` | No | generated | Password for the WebUI. Leave blank to have one generated and printed in the log. Setting it here always overrides a stored one — that is how you recover from a lockout. Masked. |
+| **Text Command Prefix** | `COMMAND_PREFIX` | No | `!fihas` | Prefix for text commands. Needs **Message Content Intent** in the Developer Portal. |
+| **Enable Text Commands** | `PREFIX_ENABLED` | No | `true` | `false` makes the bot ignore the prefix **and** never request the privileged intent. |
+| **Built-in RSSHub** | `RSSHUB_ENABLED` | No | `true` | `false` skips starting the bundled RSSHub, saving ~150MB of RAM. |
 | **X Handle** | `X_HANDLE` | No | `F_I_H_A_S` | Account to watch, without the `@`. |
 | **Discord Channel ID** | `DISCORD_CHANNEL_ID` | No | — | Seeds the target channel on first boot only. Easier to pick in the wizard. |
 | **Ping Role IDs** | `PING_ROLE_ID` | No | — | Comma-separated role IDs, first boot only. Easier in the wizard. |
 | **Poll Interval (seconds)** | `POLL_INTERVAL_SECONDS` | No | `120` | Minimum 30. |
-| **RSS Feed URLs** | `RSS_URLS` | No | built-ins | *Advanced.* Comma-separated, tried in order. Overrides the defaults. |
+| **RSS Feed URLs** | `RSS_URLS` | No | built-ins | *Advanced.* Comma-separated, tried in order. Replaces the defaults **including the built-in RSSHub**, so list it yourself if you set this. |
+| **RSSHub X Auth Token** | `TWITTER_AUTH_TOKEN` | No | — | *Advanced.* `auth_token` cookie from a logged-in X session, used by the built-in RSSHub. Masked. |
 | **X API Bearer Token** | `X_BEARER_TOKEN` | No | — | *Advanced.* Paid X plans only. Tried before RSS when present. Masked. |
 | **Timezone** | `TZ` | No | `Etc/UTC` | *Advanced.* e.g. `Europe/London`. Affects log timestamps only. |
 
-Variables marked *first boot only* seed `config.json` and are then ignored — after that the wizard
-and slash commands are the source of truth, so the bot never fights your saved settings.
+Variables marked *first boot only* seed `config.json` and are then ignored — after that the wizard,
+the dashboard and the commands are the source of truth, so the bot never fights your saved settings.
+`COMMAND_PREFIX` and `PREFIX_ENABLED` are the exception: like `X_HANDLE`, they are applied on every
+boot, so the template always wins over a value set in Discord.
+
+Any other RSSHub variable can be added as an extra container variable — everything in the
+container's environment is passed through to the bundled RSSHub as-is.
 
 ### Recommended extras
 
@@ -291,12 +394,31 @@ Six steps, about a minute. Open the WebUI and log in.
 | **Welcome** | Confirms the gateway connection, counts your servers, and generates an invite link if the bot is not in one yet. |
 | **Channel** | Lists every text and announcement channel. Channels the bot **cannot post in are disabled**, so you can't pick a broken target. |
 | **Pings** | Roles as checkboxes with their real colours. `@everyone` is disabled with a warning if the bot lacks Mention Everyone. Managed (bot/booster) roles are hidden. |
-| **Source** | Choose the strategy, edit the RSS chain, and **Test these sources** live — each one reports works/failed with the reason. |
+| **Source** | Choose the strategy, edit the RSS chain, and **Test these sources** live — each one reports works/failed with the reason. Shows the built-in RSSHub's state. |
 | **Options** | Handle, interval, post-type filters, link style, and the message template with a **live Discord-style preview**. |
 | **Finish** | Summary plus **Run first check**, which bootstraps without posting. |
 
-Afterwards the same URL becomes a dashboard: status tiles, last check/post/error, and buttons for
-Check now, Post latest, Pause/Resume, Test sources, and Re-run setup.
+---
+
+## The dashboard: editing settings later
+
+Once setup is done, the same URL becomes a dashboard. The top card is status — watching, channel,
+pings, last check/post/error, source in use, active command styles — with buttons for **Check now**,
+**Post latest**, **Pause/Resume**, **Test sources** and **Re-run setup**.
+
+Below it, every setting the wizard collects is editable in place, in collapsible sections. No
+re-running the wizard, no restart:
+
+| Section | What you can change |
+| --- | --- |
+| **Destination** | Server and channel. Channels the bot cannot post in stay greyed out. |
+| **Pings** | `@everyone` toggle and the role checkboxes. Users added via `/fihas ping add` are preserved. |
+| **Sources** | Strategy, the RSS chain (add/edit/remove/reorder by editing), plus **Use built-in feed**, **Restart RSSHub** and **Test sources**. |
+| **Posting options** | Handle, interval, post-type filters, link style, message template with the live preview. |
+| **Commands** | Turn text commands on/off, change the prefix, and see whether Discord is actually granting the Message Content intent. |
+
+Each section saves on its own, so one bad value never blocks the rest, and a section stays open
+across a save. Invalid input is rejected with the reason rather than silently clamped.
 
 ### Security
 
@@ -309,10 +431,45 @@ it behind your existing reverse proxy with TLS, or reach it over your VPN/Tailsc
 
 ---
 
-## Slash commands
+## Commands
 
-All responses are ephemeral (only you see them) and require **Manage Server** by default. Change who
-may use them in **Server Settings → Integrations → FIHAS Bot**.
+Everything is available two ways. Slash command responses are ephemeral (only you see them); text
+command replies are visible to the channel. Both require **Manage Server** — for slash commands you
+can change that in **Server Settings → Integrations → FIHAS Bot**.
+
+| | Slash | Text |
+| --- | --- | --- |
+| Looks like | `/fihas status` | `!fihas status` |
+| Needs | `applications.commands` scope | **Message Content Intent** |
+| Replies | ephemeral | visible in the channel |
+| Turn off | remove the scope | `PREFIX_ENABLED=false` |
+
+### When slash commands don't show up
+
+They are registered on every start, but they can still be invisible: global registration takes up to
+an hour, the bot may have been invited without `applications.commands`, or an integration permission
+may be hiding them. Text commands are the fallback that does not depend on any of that.
+
+```
+!fihas help
+```
+
+- Set **Discord Server ID** (`DISCORD_GUILD_ID`) to make `/fihas` register **instantly** instead of
+  globally — that fixes the common case.
+- Enable **MESSAGE CONTENT INTENT** in the Developer Portal, or the bot cannot read `!fihas` at all.
+  It logs exactly this on startup and the web UI shows it under **Commands**.
+- Change the prefix in the web UI, with `/fihas prefix set !f`, or with `COMMAND_PREFIX`. Anything
+  up to 16 characters with no spaces, `@`, `#` or backticks works — `!fihas`, `!f`, `fihas!`.
+- Turn text commands off entirely with `/fihas prefix enabled false` or `PREFIX_ENABLED=false`. The
+  bot then never requests the privileged intent.
+
+Prefix matching is case-insensitive, and a prefix ending in a letter or digit must be followed by a
+space, so `!fihas` never fires on `!fihasburger`.
+
+### Reference
+
+Replace `/fihas` with `!fihas` for the text version — the arguments are identical, except that
+`#channel`, `@role` and `@user` are written as mentions or raw IDs.
 
 | Command | What it does |
 | --- | --- |
@@ -334,8 +491,12 @@ may use them in **Server Settings → Integrations → FIHAS Bot**.
 | `/fihas set filter <type> <bool>` | Include/exclude `retweets`, `replies`, `quotes` |
 | `/fihas set link <fxtwitter\|vxtwitter>` | Which embed-fixing mirror to link |
 | `/fihas set template <text>` | Message format. Placeholders: `{pings}` `{handle}` `{link}` `{text}` |
+| `/fihas prefix set <text>` | Change the text-command prefix |
+| `/fihas prefix enabled <bool>` | Turn text commands on or off |
+| `/fihas help` | Every command, including the text versions |
 
-Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwitter links.
+Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwitter links,
+`!fihas` text commands on.
 
 ---
 
@@ -355,6 +516,14 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 - **Announcement channels** are automatically crossposted to following servers.
 - **The bot's avatar** is set from `FIHAS.jpg` on startup, but only when the file's hash changes —
   Discord rate-limits avatar changes hard, so re-uploading every restart would lock the bot out.
+- **The bundled RSSHub is supervised, not required.** If it crashes it is restarted with backoff
+  (2s, 5s, 15s, 30s, then a minute); while it is down the poller just falls through to the next
+  feed. If the image ever ships without it, the bot logs that and carries on.
+- **The privileged intent is only requested when text commands are on.** If Discord refuses it, the
+  bot logs what to enable and reconnects without it rather than crash-looping, so `/fihas` and the
+  web UI keep working.
+- **Prefix replies never ping.** Several commands quote the ping list back at you; mentions in bot
+  replies are disabled outright, so reading the config can't notify a role.
 
 ---
 
@@ -363,10 +532,15 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 | Symptom | Fix |
 | --- | --- |
 | Container restarts in a loop | Check the log. A bad `DISCORD_TOKEN` prints an explicit message and exits 1. |
-| `/fihas` doesn't appear in Discord | Set **Discord Server ID** and restart — global commands take up to an hour to propagate. |
+| `/fihas` doesn't appear in Discord | Set **Discord Server ID** and restart — global commands take up to an hour to propagate. Meanwhile use `!fihas status`. |
+| `!fihas` does nothing | Enable **MESSAGE CONTENT INTENT** (Developer Portal → Bot) and restart. The log and the web UI's **Commands** section both say so when it is missing. Also check the bot has **Read Message History** and **Send Messages** in that channel. |
+| `!fihas` says you need Manage Server | Text commands require it, same as slash commands. There is no separate setting. |
 | Can't get into the web UI | Set **Setup UI Password** in the template and restart; the env var always overrides the stored password. |
 | WebUI button does nothing | Something else is on host port 8080. Change the host side of the port mapping. |
-| Nothing ever posts | **Test sources**. If everything is ❌, all your RSS mirrors are down — self-host RSSHub. |
+| Nothing ever posts | **Test sources**. If everything is ❌, see the next two rows. |
+| Built-in RSSHub shows ❌ | Almost always `Twitter API is not configured` — it needs `TWITTER_AUTH_TOKEN` for X routes. **Test sources** says so explicitly when the variable is unset. Then **Restart RSSHub** in the web UI. |
+| Port 1200 already in use | Delete the **RSSHub Port** row from the container config — the bot does not need it published — or set `RSSHUB_PORT` to something free. |
+| Container uses more RAM than expected | The bundled RSSHub accounts for ~150MB. Set `RSSHUB_ENABLED=false` if you would rather use external feeds. |
 | `403` from the X API | Free tier can't read timelines. Upgrade to Basic, or set the source mode to RSS. |
 | Pings don't notify anyone | The role may be un-mentionable, or the bot lacks **Mention Everyone** — which is also required to ping un-mentionable roles. |
 | Posted the whole backlog at once | The `bootstrapped` flag was lost. Check `/config` is actually mapped to persistent storage. |
@@ -377,10 +551,14 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 ## Layout
 
 ```
-src/index.js               startup, Discord wiring, command registration, lifecycle
-src/commands.js            every /fihas subcommand
+src/index.js               startup, Discord wiring, intents, lifecycle
+src/actions.js             every command's behaviour, shared by both command styles
+src/commands.js            /fihas slash command definitions -> actions
+src/prefix.js              !fihas text command parsing -> actions
 src/poller.js              polling loop, filters, dedupe, posting, backoff
-src/store.js               config persistence, seen-ID tracking
+src/store.js               config persistence, seen-ID tracking, validation rules
+src/rsshub.js              supervises the RSSHub bundled into the image
+src/runtime.js             process-wide flags (is the message intent live?)
 src/avatar.js              hash-guarded bot profile picture upload
 src/sources/xapi.js        official X API v2
 src/sources/rss.js         RSS/Nitter/RSSHub feeds
@@ -389,9 +567,11 @@ src/web/ui.html            the wizard and dashboard (self-contained)
 test/run.mjs               test runner — npm test
 test/store.test.mjs        config, dedupe, link building, RSS parsing, fallback
 test/poller.test.mjs       full polling loop against a fake feed + stub Discord
+test/prefix.test.mjs       text command parsing, dispatch, permissions, rsshub helpers
 test/web.test.mjs          web API, auth, input validation
 test/ui.test.mjs           setup UI markup and JavaScript
 .github/workflows/build.yml  test, build multi-arch, publish to GHCR
 unraid/fihas-bot.xml       Unraid container template
+Dockerfile                 multi-stage build on top of the official RSSHub image
 FIHAS.jpg                  app icon and bot avatar
 ```
