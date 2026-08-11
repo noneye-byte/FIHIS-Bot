@@ -1,0 +1,42 @@
+services:
+  fihas-bot:
+    build: .
+    image: fihas-bot:latest
+    container_name: fihas-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      X_HANDLE: ${X_HANDLE:-F_I_H_A_S}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
+      PING_ROLE_ID: ${PING_ROLE_ID:-}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-120}
+      RSS_URLS: ${RSS_URLS:-}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - ./config:/config
+    ports:
+      - "8080:8080"
+
+  # Self-hosted RSS bridge. Far more reliable than public mirrors, which are
+  # shared by the whole internet and get rate-limited constantly.
+  #   docker compose --profile rsshub up -d
+  # Then point the bot at http://rsshub:1200/twitter/user/F_I_H_A_S
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: fihas-rsshub
+    profiles: ["rsshub"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      CACHE_EXPIRE: "300"
+      # RSSHub's Twitter route needs credentials of its own. Supply either
+      # TWITTER_AUTH_TOKEN (auth_token cookie from a logged-in session) or
+      # TWITTER_USERNAME/TWITTER_PASSWORD. See the RSSHub docs for the current
+      # requirement — it changes as X tightens access.
+      TWITTER_AUTH_TOKEN: ${TWITTER_AUTH_TOKEN:-}
+    ports:
+      - "1200:1200"

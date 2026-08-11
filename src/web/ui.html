@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FIHAS Bot — Setup</title>
+<link rel="icon" href="/logo.jpg">
+<style>
+  :root{
+    --bg:#0d0e13; --card:#161822; --card-2:#1d2030; --line:#2a2e42;
+    --text:#e9ebf2; --muted:#959bb0; --accent:#5b8cff; --ok:#3ecf8e; --warn:#f0b429; --bad:#f2555a;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .rainbow{height:4px;background:linear-gradient(90deg,#e40303,#ff8c00,#ffed00,#008026,#24408e,#732982)}
+  .wrap{max-width:860px;margin:0 auto;padding:28px 20px 80px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+  header img{width:52px;height:52px;border-radius:14px;flex:none}
+  header h1{margin:0;font-size:20px;letter-spacing:-.01em}
+  header .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  header .spacer{flex:1}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;margin-bottom:18px}
+  .card h2{margin:0 0 4px;font-size:17px}
+  .card .hint{color:var(--muted);font-size:13px;margin:0 0 18px}
+  label{display:block;font-size:13px;font-weight:600;margin:16px 0 6px}
+  label:first-of-type{margin-top:0}
+  input[type=text],input[type=password],input[type=number],select,textarea{
+    width:100%;padding:10px 12px;background:var(--card-2);border:1px solid var(--line);
+    border-radius:9px;color:var(--text);font:inherit;font-size:14px}
+  textarea{min-height:84px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:140px}
+  button{padding:10px 16px;border-radius:9px;border:1px solid var(--line);background:var(--card-2);
+    color:var(--text);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover:not(:disabled){filter:brightness(1.1)}
+  button.ghost{background:transparent}
+  button.small{padding:6px 11px;font-size:13px}
+  .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;flex-wrap:wrap}
+  .actions .left{margin-right:auto}
+  .steps{display:flex;gap:6px;margin-bottom:22px;flex-wrap:wrap}
+  .steps div{flex:1;min-width:40px;height:4px;border-radius:2px;background:var(--line)}
+  .steps div.done{background:var(--accent)}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
+    font-size:12px;font-weight:600;background:var(--card-2);border:1px solid var(--line)}
+  .pill.ok{color:var(--ok);border-color:#1e5c43}
+  .pill.bad{color:var(--bad);border-color:#63262b}
+  .pill.warn{color:var(--warn);border-color:#61491a}
+  .list{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;padding-right:4px}
+  .opt{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--card-2);
+    border:1px solid var(--line);border-radius:9px;cursor:pointer}
+  .opt:hover{border-color:var(--accent)}
+  .opt input{margin:0;flex:none;accent-color:var(--accent)}
+  .opt .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .opt .tag{font-size:11px;color:var(--muted);flex:none}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  .stat{background:var(--card-2);border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+  .stat .k{font-size:12px;color:var(--muted);margin-bottom:3px}
+  .stat .v{font-size:15px;font-weight:600;word-break:break-word}
+  .preview{background:#36393f;border-radius:9px;padding:13px 15px;margin-top:10px;
+    font-size:14px;white-space:pre-wrap;word-break:break-word}
+  .preview .m{color:#c9d5ff;background:#3f4570;border-radius:3px;padding:0 2px}
+  .preview a{color:#00a8fc;text-decoration:none}
+  .msg{padding:11px 14px;border-radius:9px;font-size:13.5px;margin-bottom:14px;display:none}
+  .msg.show{display:block}
+  .msg.err{background:#3a1d20;border:1px solid #63262b;color:#ffb4b7}
+  .msg.good{background:#14322a;border:1px solid #1e5c43;color:#8bebc0}
+  .msg.info{background:#1b2440;border:1px solid #2c3a63;color:#b8caff}
+  .urlrow{display:flex;gap:8px;margin-bottom:8px}
+  .urlrow input{flex:1}
+  .results{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+  .result{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;background:var(--card-2);
+    border:1px solid var(--line);border-radius:9px;font-size:13px}
+  .result .body{flex:1;min-width:0}
+  .result .src{font-weight:600;word-break:break-all}
+  .result .det{color:var(--muted);margin-top:2px;word-break:break-word}
+  code{background:var(--card-2);padding:2px 6px;border-radius:5px;font-size:12.5px;
+    font-family:ui-monospace,Consolas,monospace}
+  a{color:var(--accent)}
+  .switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;
+    background:var(--card-2);border:1px solid var(--line);border-radius:9px;cursor:pointer;margin-bottom:8px}
+  .switch .t{font-size:13.5px}
+  .switch .d{font-size:12px;color:var(--muted);margin-top:2px}
+  .switch input{accent-color:var(--accent);flex:none;width:17px;height:17px}
+  .center{text-align:center;padding:34px 0}
+  .center h2{margin:0 0 8px}
+  .hide{display:none!important}
+  @media(max-width:560px){.wrap{padding:18px 14px 60px}.card{padding:17px}}
+</style>
+</head>
+<body>
+<div class="rainbow"></div>
+<div class="wrap">
+
+  <header>
+    <img src="/logo.jpg" alt="">
+    <div>
+      <h1>FIHAS Bot</h1>
+      <div class="sub" id="hdrsub">Loading…</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost small hide" id="logout">Log out</button>
+  </header>
+
+  <!-- ------------------------------------------------------------ LOGIN -->
+  <div id="login" class="card hide">
+    <h2>Password required</h2>
+    <p class="hint">Set by <code>WEB_PASSWORD</code>, or auto-generated and printed in the container log on first start.</p>
+    <div class="msg err" id="loginerr"></div>
+    <form id="loginform">
+      <label for="pw">Password</label>
+      <input type="password" id="pw" autocomplete="current-password" autofocus>
+      <div class="actions"><button class="primary" type="submit">Unlock</button></div>
+    </form>
+  </div>
+
+  <!-- ----------------------------------------------------------- WIZARD -->
+  <div id="wizard" class="hide">
+    <div class="steps" id="steps"></div>
+    <div class="msg err" id="werr"></div>
+    <div id="stepbody"></div>
+  </div>
+
+  <!-- -------------------------------------------------------- DASHBOARD -->
+  <div id="dash" class="hide">
+    <div class="msg" id="dashmsg"></div>
+    <div class="card">
+      <h2>Status</h2>
+      <p class="hint">Watching <strong id="dhandle"></strong> · <span id="dstate"></span></p>
+      <div class="grid" id="dstats"></div>
+      <div class="actions">
+        <button class="left" id="dsetup">Re-run setup</button>
+        <button id="dtest">Test sources</button>
+        <button id="dlatest">Post latest</button>
+        <button id="dpause"></button>
+        <button class="primary" id="dcheck">Check now</button>
+      </div>
+      <div class="results" id="dresults"></div>
+    </div>
+    <div id="dashedit"></div>
+  </div>
+
+</div>
+
+<script>
+/* ------------------------------------------------------------ plumbing */
+const $ = (id) => document.getElementById(id);
+let S = null;            // server state
+let step = 0;            // wizard step index
+let draft = {};          // pending edits within the wizard
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if (res.status === 401) { showLogin(); throw new Error('Not authenticated'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && data.errors) throw new Error(data.errors.join(' '));
+  if (!res.ok && data.error) throw new Error(data.error);
+  return data;
+}
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+function when(iso) {
+  if (!iso) return 'never';
+  const secs = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (secs < 60) return secs + 's ago';
+  if (secs < 3600) return Math.round(secs / 60) + 'm ago';
+  if (secs < 86400) return Math.round(secs / 3600) + 'h ago';
+  return Math.round(secs / 86400) + 'd ago';
+}
+
+/* Approximates how Discord will actually render the message: role mentions
+   become named pills, and the common markdown is applied. */
+function renderDiscord(text) {
+  const roleName = (id) => {
+    for (const g of (S?.guilds ?? [])) {
+      const r = g.roles.find((x) => x.id === id);
+      if (r) return r.name;
+    }
+    return 'unknown-role';
+  };
+  return esc(text)
+    .replace(/&lt;@&amp;(\w+)&gt;/g, (_, id) => `<span class="m">@${esc(roleName(id))}</span>`)
+    .replace(/&lt;@(\w+)&gt;/g, '<span class="m">@user</span>')
+    .replace(/@(everyone|here)\b/g, '<span class="m">@$1</span>')
+    .replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
+    .replace(/__([^_]+)__/g, '<u>$1</u>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function flash(el, text, kind) {
+  el.className = 'msg show ' + kind;
+  el.textContent = text;
+  if (kind === 'good') setTimeout(() => { el.className = 'msg'; }, 4000);
+}
+
+/* --------------------------------------------------------------- views */
+function showLogin() {
+  $('login').classList.remove('hide');
+  $('wizard').classList.add('hide');
+  $('dash').classList.add('hide');
+  $('logout').classList.add('hide');
+  $('hdrsub').textContent = 'Locked';
+}
+
+async function boot() {
+  const session = await fetch('/api/session').then((r) => r.json());
+  if (!session.authed) return showLogin();
+  await refresh();
+}
+
+async function refresh() {
+  S = await api('/api/state');
+  $('login').classList.add('hide');
+  $('logout').classList.remove('hide');
+  $('hdrsub').innerHTML = S.connected
+    ? `Connected as <strong>${esc(S.botTag)}</strong>`
+    : '<span style="color:var(--bad)">Not connected to Discord</span>';
+  if (S.config.setupCompleted) renderDash(); else renderWizard();
+}
+
+$('loginform').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/login', { password: $('pw').value });
+    $('loginerr').className = 'msg err';
+    $('pw').value = '';
+    await refresh();
+  } catch (err) { flash($('loginerr'), err.message, 'err'); }
+};
+
+$('logout').onclick = async () => { await api('/api/logout', {}); location.reload(); };
+
+/* -------------------------------------------------------------- wizard */
+const STEPS = ['Welcome', 'Channel', 'Pings', 'Source', 'Options', 'Finish'];
+
+function renderWizard() {
+  $('wizard').classList.remove('hide');
+  $('dash').classList.add('hide');
+  $('steps').innerHTML = STEPS.map((_, i) => `<div class="${i <= step ? 'done' : ''}"></div>`).join('');
+  $('werr').className = 'msg';
+  const body = $('stepbody');
+  body.innerHTML = '';
+  body.appendChild(({
+    0: stepWelcome, 1: stepChannel, 2: stepPings,
+    3: stepSource, 4: stepOptions, 5: stepFinish
+  })[step]());
+}
+
+function card(title, hint, inner) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML = `<h2>${title}</h2><p class="hint">${hint}</p>` + inner;
+  return el;
+}
+
+function nav(el, { back = true, next = 'Continue', onNext, disabled = false, extra = '' }) {
+  const bar = document.createElement('div');
+  bar.className = 'actions';
+  bar.innerHTML =
+    (extra ? `<div class="left">${extra}</div>` : '<div class="left"></div>') +
+    (back ? '<button id="wb">Back</button>' : '') +
+    `<button class="primary" id="wn" ${disabled ? 'disabled' : ''}>${next}</button>`;
+  el.appendChild(bar);
+  // Query within `bar`, not the document: `el` is not attached to the DOM yet.
+  if (back) bar.querySelector('#wb').onclick = () => { step--; renderWizard(); };
+  bar.querySelector('#wn').onclick = onNext;
+  return bar;
+}
+
+/* Step 0 — welcome */
+function stepWelcome() {
+  const invite = S.clientId
+    ? `https://discord.com/api/oauth2/authorize?client_id=${S.clientId}&permissions=277025770496&scope=bot%20applications.commands`
+    : null;
+  const noGuilds = !S.guilds.length;
+  const el = card('Welcome', 'This wizard configures everything the bot needs. It takes about a minute.',
+    `<div class="grid">
+      <div class="stat"><div class="k">Discord</div><div class="v">${S.connected
+        ? '<span class="pill ok">Connected</span>' : '<span class="pill bad">Offline</span>'}</div></div>
+      <div class="stat"><div class="k">Servers</div><div class="v">${S.guilds.length}</div></div>
+      <div class="stat"><div class="k">X API token</div><div class="v">${S.hasXToken
+        ? '<span class="pill ok">Present</span>' : '<span class="pill warn">Not set — RSS only</span>'}</div></div>
+    </div>` +
+    (noGuilds
+      ? `<div class="msg show info" style="margin-top:16px">The bot is not in a server yet.
+          ${invite ? `<a href="${invite}" target="_blank" rel="noopener">Invite it here</a>, then reload this page.`
+                   : 'Set <code>DISCORD_CLIENT_ID</code> to generate an invite link.'}</div>`
+      : ''));
+  nav(el, { back: false, next: 'Start', disabled: noGuilds, onNext: () => { step = 1; renderWizard(); },
+    extra: noGuilds ? '<button id="reload" class="ghost">Reload</button>' : '' });
+  const r = el.querySelector('#reload');
+  if (r) r.onclick = () => location.reload();
+  return el;
+}
+
+/* Step 1 — server + channel */
+function stepChannel() {
+  const gid = draft.guildId ?? S.config.guildId ?? S.guilds[0]?.id;
+  const guild = S.guilds.find((g) => g.id === gid) ?? S.guilds[0];
+  const chosen = draft.channelId ?? S.config.channelId;
+
+  const el = card('Where should posts go?', 'Pick the channel the bot announces new posts in.',
+    (S.guilds.length > 1
+      ? `<label for="gsel">Server</label><select id="gsel">${S.guilds.map((g) =>
+          `<option value="${g.id}" ${g.id === guild.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>`
+      : '') +
+    `<label>Channel</label><div class="list" id="chlist">${
+      guild.channels.length
+        ? guild.channels.map((c) => `
+          <label class="opt">
+            <input type="radio" name="ch" value="${c.id}" ${c.id === chosen ? 'checked' : ''} ${c.canPost ? '' : 'disabled'}>
+            <span class="dot" style="background:${c.canPost ? 'var(--ok)' : 'var(--bad)'}"></span>
+            <span class="name">#${esc(c.name)}</span>
+            ${c.announcement ? '<span class="tag">announcement</span>' : ''}
+            ${c.canPost ? '' : '<span class="tag">no permission</span>'}
+          </label>`).join('')
+        : '<div class="hint">No text channels visible to the bot.</div>'
+    }</div>
+    <p class="hint" style="margin:10px 0 0">Channels the bot cannot post in are disabled. Grant it
+      <strong>View Channel</strong> and <strong>Send Messages</strong> there, then reload.</p>`);
+
+  const sel = el.querySelector('#gsel');
+  if (sel) sel.onchange = () => { draft.guildId = sel.value; draft.channelId = null; renderWizard(); };
+
+  nav(el, { onNext: async () => {
+    const picked = el.querySelector('input[name=ch]:checked');
+    if (!picked) return flash($('werr'), 'Pick a channel to continue.', 'err');
+    draft.guildId = guild.id;
+    draft.channelId = picked.value;
+    await save({ guildId: guild.id, channelId: picked.value });
+    step = 2; renderWizard();
+  }});
+  return el;
+}
+
+/* Step 2 — pings */
+function stepPings() {
+  const guild = S.guilds.find((g) => g.id === (draft.guildId ?? S.config.guildId)) ?? S.guilds[0];
+  const current = draft.pings ?? S.config.pings;
+  const has = (id) => current.some((p) => p.id === id);
+  const everyone = draft.mentionEveryone ?? S.config.mentionEveryone;
+
+  const el = card('Who gets pinged?', 'Selected roles are mentioned on every new post. Leave empty for a silent post.',
+    `<label class="switch">
+      <div><div class="t">Ping @everyone</div>
+        <div class="d">${guild.canMentionEveryone
+          ? 'Use sparingly.'
+          : '<span style="color:var(--warn)">Bot lacks the Mention Everyone permission — this will do nothing.</span>'}</div></div>
+      <input type="checkbox" id="evy" ${everyone ? 'checked' : ''} ${guild.canMentionEveryone ? '' : 'disabled'}>
+    </label>
+    <label>Roles</label>
+    <div class="list" id="rolelist">${
+      guild.roles.length
+        ? guild.roles.map((r) => `
+          <label class="opt">
+            <input type="checkbox" value="${r.id}" ${has(r.id) ? 'checked' : ''}>
+            <span class="dot" style="background:${r.color === '#000000' ? 'var(--muted)' : r.color}"></span>
+            <span class="name">@${esc(r.name)}</span>
+          </label>`).join('')
+        : '<div class="hint">No assignable roles in this server.</div>'
+    }</div>`);
+
+  nav(el, { onNext: async () => {
+    const pings = [...el.querySelectorAll('#rolelist input:checked')].map((i) => ({ type: 'role', id: i.value }));
+    const mentionEveryone = el.querySelector('#evy').checked;
+    draft.pings = pings; draft.mentionEveryone = mentionEveryone;
+    await save({ pings, mentionEveryone });
+    step = 3; renderWizard();
+  }});
+  return el;
+}
+
+/* Step 3 — source */
+function stepSource() {
+  const urls = draft.rssUrls ?? S.config.source.rssUrls;
+  const mode = draft.sourceMode ?? S.config.source.mode;
+
+  const el = card('How should the bot detect new posts?',
+    'X removed free API access to timelines, so the bot falls back through RSS mirrors. Test them here.',
+    `<label for="mode">Strategy</label>
+    <select id="mode">
+      <option value="auto" ${mode === 'auto' ? 'selected' : ''}>Auto — X API if available, then RSS</option>
+      <option value="rss" ${mode === 'rss' ? 'selected' : ''}>RSS mirrors only</option>
+      <option value="xapi" ${mode === 'xapi' ? 'selected' : ''}>Official X API only (needs paid token)</option>
+    </select>
+    ${S.hasXToken ? '' : '<p class="hint" style="margin:8px 0 0">No <code>X_BEARER_TOKEN</code> is set, so the X API will be skipped.</p>'}
+    <label>RSS feeds — tried in order</label>
+    <div id="urls"></div>
+    <button class="small" id="addurl" type="button">+ Add feed</button>
+    <p class="hint" style="margin:12px 0 0">Most reliable option: run RSSHub on your own server and point
+      here, e.g. <code>http://192.168.1.50:1200/twitter/user/${esc(S.config.handle)}</code></p>
+    <div class="results" id="testres"></div>`);
+
+  const box = el.querySelector('#urls');
+  const paint = () => {
+    box.innerHTML = urls.map((u, i) =>
+      `<div class="urlrow"><input type="text" value="${esc(u)}" data-i="${i}">
+       <button class="small" data-del="${i}" type="button">Remove</button></div>`).join('');
+    box.querySelectorAll('input').forEach((inp) => {
+      inp.oninput = () => { urls[+inp.dataset.i] = inp.value; };
+    });
+    box.querySelectorAll('[data-del]').forEach((b) => {
+      b.onclick = () => { urls.splice(+b.dataset.del, 1); paint(); };
+    });
+  };
+  paint();
+  el.querySelector('#addurl').onclick = () => { urls.push(''); paint(); };
+
+  const testBtn = document.createElement('button');
+  testBtn.textContent = 'Test these sources';
+  testBtn.type = 'button';
+
+  nav(el, { onNext: async () => {
+    draft.rssUrls = urls.filter(Boolean);
+    draft.sourceMode = el.querySelector('#mode').value;
+    await save({ rssUrls: draft.rssUrls, sourceMode: draft.sourceMode });
+    step = 4; renderWizard();
+  }});
+  el.querySelector('.actions .left').appendChild(testBtn);
+
+  testBtn.onclick = async () => {
+    testBtn.disabled = true; testBtn.textContent = 'Testing…';
+    try {
+      await save({ rssUrls: urls.filter(Boolean), sourceMode: el.querySelector('#mode').value }, true);
+      const { results } = await api('/api/action', { action: 'test' });
+      el.querySelector('#testres').innerHTML = results.map(renderResult).join('');
+    } catch (err) { flash($('werr'), err.message, 'err'); }
+    testBtn.disabled = false; testBtn.textContent = 'Test these sources';
+  };
+  return el;
+}
+
+function renderResult(r) {
+  const icon = r.skipped ? '<span class="pill">skipped</span>'
+    : r.ok ? '<span class="pill ok">works</span>' : '<span class="pill bad">failed</span>';
+  return `<div class="result">${icon}<div class="body">
+    <div class="src">${esc(r.source)}</div><div class="det">${esc(r.detail)}</div></div></div>`;
+}
+
+/* Step 4 — options */
+function stepOptions() {
+  const c = S.config;
+  const el = card('Options', 'All of this can be changed later, here or with <code>/fihas</code> in Discord.',
+    `<div class="row">
+      <div><label for="handle">X account to watch</label><input type="text" id="handle" value="${esc(draft.handle ?? c.handle)}"></div>
+      <div><label for="interval">Check every (seconds)</label><input type="number" id="interval" min="30" max="86400" value="${draft.intervalSeconds ?? c.intervalSeconds}"></div>
+    </div>
+    <label>Post types</label>
+    ${[['retweets','Retweets'],['replies','Replies'],['quotes','Quote tweets']].map(([k,t]) =>
+      `<label class="switch"><div class="t">${t}</div>
+        <input type="checkbox" data-f="${k}" ${(draft.filters?.[k] ?? c.filters[k]) ? 'checked' : ''}></label>`).join('')}
+    <label for="link">Link style</label>
+    <select id="link">
+      <option value="fxtwitter" ${(draft.linkStyle ?? c.linkStyle) === 'fxtwitter' ? 'selected' : ''}>fxtwitter.com</option>
+      <option value="vxtwitter" ${(draft.linkStyle ?? c.linkStyle) === 'vxtwitter' ? 'selected' : ''}>vxtwitter.com</option>
+    </select>
+    <label for="tpl">Message template</label>
+    <textarea id="tpl">${esc(draft.messageTemplate ?? c.messageTemplate)}</textarea>
+    <p class="hint" style="margin:6px 0 0">Placeholders: <code>{pings}</code> <code>{handle}</code> <code>{link}</code> <code>{text}</code></p>
+    <div class="preview" id="prev">…</div>`);
+
+  const tpl = el.querySelector('#tpl');
+  const doPreview = async () => {
+    try {
+      const { rendered } = await api('/api/action', { action: 'preview', template: tpl.value });
+      el.querySelector('#prev').innerHTML = renderDiscord(rendered);
+    } catch {}
+  };
+  tpl.oninput = () => { clearTimeout(tpl._t); tpl._t = setTimeout(doPreview, 300); };
+  doPreview();
+
+  nav(el, { onNext: async () => {
+    const filters = {};
+    el.querySelectorAll('[data-f]').forEach((i) => { filters[i.dataset.f] = i.checked; });
+    const patch = {
+      handle: el.querySelector('#handle').value,
+      intervalSeconds: el.querySelector('#interval').value,
+      linkStyle: el.querySelector('#link').value,
+      messageTemplate: tpl.value,
+      filters
+    };
+    if (await save(patch)) { step = 5; renderWizard(); }
+  }});
+  return el;
+}
+
+/* Step 5 — finish */
+function stepFinish() {
+  const c = S.config;
+  const el = card('Ready', 'Run a first check to confirm everything works, then finish.',
+    `<div class="grid">
+      <div class="stat"><div class="k">Watching</div><div class="v">@${esc(c.handle)}</div></div>
+      <div class="stat"><div class="k">Channel</div><div class="v">#${esc(channelName(c.channelId))}</div></div>
+      <div class="stat"><div class="k">Pinging</div><div class="v">${describePings(c)}</div></div>
+      <div class="stat"><div class="k">Interval</div><div class="v">every ${c.intervalSeconds}s</div></div>
+    </div>
+    <div class="msg show info" style="margin-top:16px">The first check records existing posts as
+      already-seen without announcing them, so starting the bot never floods your channel. Anything
+      posted after that gets announced.</div>
+    <div class="results" id="fres"></div>`);
+
+  const runBtn = document.createElement('button');
+  runBtn.textContent = 'Run first check';
+  runBtn.type = 'button';
+
+  nav(el, { next: 'Finish setup', onNext: async () => {
+    await save({ setupCompleted: true });
+    await refresh();
+  }});
+  el.querySelector('.actions .left').appendChild(runBtn);
+
+  runBtn.onclick = async () => {
+    runBtn.disabled = true; runBtn.textContent = 'Checking…';
+    const r = await api('/api/action', { action: 'check' });
+    el.querySelector('#fres').innerHTML = r.ok === false
+      ? renderResult({ source: 'Check failed', ok: false, detail: r.error })
+      : renderResult({ source: r.bootstrap ? 'Bootstrapped' : 'Checked', ok: true,
+          detail: r.bootstrap
+            ? `Recorded ${r.skipped} existing post(s) via ${r.sourceUsed}. Nothing was posted.`
+            : `${r.posted} posted, ${r.skipped} filtered, via ${r.sourceUsed}` });
+    runBtn.disabled = false; runBtn.textContent = 'Run first check';
+  };
+  return el;
+}
+
+function channelName(id) {
+  for (const g of S.guilds) { const c = g.channels.find((x) => x.id === id); if (c) return c.name; }
+  return id ? 'unknown' : 'not set';
+}
+
+function describePings(c) {
+  const names = [];
+  if (c.mentionEveryone) names.push('@everyone');
+  for (const p of c.pings) {
+    let found = null;
+    for (const g of S.guilds) { const r = g.roles.find((x) => x.id === p.id); if (r) found = '@' + r.name; }
+    names.push(esc(found ?? p.id));
+  }
+  return names.length ? names.join(', ') : 'nobody';
+}
+
+/* Persist a patch. Returns true on success. */
+async function save(patch, quiet) {
+  try {
+    const out = await api('/api/config', patch);
+    S = out.state;
+    return true;
+  } catch (err) {
+    if (!quiet) flash($('werr'), err.message, 'err');
+    return false;
+  }
+}
+
+/* ----------------------------------------------------------- dashboard */
+function renderDash() {
+  $('dash').classList.remove('hide');
+  $('wizard').classList.add('hide');
+  const c = S.config;
+
+  $('dhandle').textContent = '@' + c.handle;
+  $('dstate').innerHTML = c.paused
+    ? '<span class="pill warn">Paused</span>'
+    : '<span class="pill ok">Running</span>';
+
+  $('dstats').innerHTML = `
+    <div class="stat"><div class="k">Channel</div><div class="v">#${esc(channelName(c.channelId))}</div></div>
+    <div class="stat"><div class="k">Pinging</div><div class="v">${describePings(c)}</div></div>
+    <div class="stat"><div class="k">Last check</div><div class="v">${when(c.lastCheckAt)}</div></div>
+    <div class="stat"><div class="k">Last post</div><div class="v">${when(c.lastPostAt)}</div></div>
+    <div class="stat"><div class="k">Interval</div><div class="v">every ${c.intervalSeconds}s</div></div>
+    <div class="stat"><div class="k">Source in use</div><div class="v">${esc(c.lastSourceUsed ?? 'none yet')}</div></div>
+    ${c.lastError ? `<div class="stat" style="grid-column:1/-1;border-color:#63262b">
+      <div class="k">Last error</div><div class="v" style="font-size:13px;color:#ffb4b7">${esc(c.lastError)}</div></div>` : ''}`;
+
+  $('dpause').textContent = c.paused ? 'Resume' : 'Pause';
+  $('dpause').onclick = async () => { await save({ paused: !c.paused }); await refresh(); };
+  $('dsetup').onclick = async () => { step = 0; draft = {}; await save({ setupCompleted: false }); await refresh(); };
+
+  $('dcheck').onclick = () => run($('dcheck'), 'Checking…', async () => {
+    const r = await api('/api/action', { action: 'check' });
+    flash($('dashmsg'), r.ok === false ? r.error
+      : r.bootstrap ? `Bootstrapped ${r.skipped} post(s) via ${r.sourceUsed}.`
+      : `${r.posted} posted, ${r.skipped} filtered, via ${r.sourceUsed}.`,
+      r.ok === false ? 'err' : 'good');
+    await refresh();
+  });
+
+  $('dlatest').onclick = () => run($('dlatest'), 'Posting…', async () => {
+    const r = await api('/api/action', { action: 'latest', ping: false });
+    flash($('dashmsg'), r.ok ? `Posted ${r.id} (no ping) via ${r.sourceUsed}.` : r.error, r.ok ? 'good' : 'err');
+  });
+
+  $('dtest').onclick = () => run($('dtest'), 'Testing…', async () => {
+    const { results } = await api('/api/action', { action: 'test' });
+    $('dresults').innerHTML = results.map(renderResult).join('');
+  });
+
+  $('dashedit').innerHTML = '';
+  $('dashedit').appendChild(dashEditors());
+}
+
+async function run(btn, busy, fn) {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = busy;
+  try { await fn(); } catch (err) { flash($('dashmsg'), err.message, 'err'); }
+  btn.disabled = false; btn.textContent = label;
+}
+
+function dashEditors() {
+  const c = S.config;
+  const el = card('Settings', 'Changes apply immediately.',
+    `<div class="row">
+      <div><label for="e_handle">X account</label><input type="text" id="e_handle" value="${esc(c.handle)}"></div>
+      <div><label for="e_int">Check every (seconds)</label><input type="number" id="e_int" min="30" max="86400" value="${c.intervalSeconds}"></div>
+    </div>
+    <label>Post types</label>
+    ${[['retweets','Retweets'],['replies','Replies'],['quotes','Quote tweets']].map(([k,t]) =>
+      `<label class="switch"><div class="t">${t}</div>
+        <input type="checkbox" data-f="${k}" ${c.filters[k] ? 'checked' : ''}></label>`).join('')}
+    <label for="e_link">Link style</label>
+    <select id="e_link">
+      <option value="fxtwitter" ${c.linkStyle === 'fxtwitter' ? 'selected' : ''}>fxtwitter.com</option>
+      <option value="vxtwitter" ${c.linkStyle === 'vxtwitter' ? 'selected' : ''}>vxtwitter.com</option>
+    </select>
+    <label for="e_tpl">Message template</label>
+    <textarea id="e_tpl">${esc(c.messageTemplate)}</textarea>
+    <div class="preview" id="e_prev">…</div>`);
+
+  const tpl = el.querySelector('#e_tpl');
+  const doPreview = async () => {
+    try {
+      const { rendered } = await api('/api/action', { action: 'preview', template: tpl.value });
+      el.querySelector('#e_prev').innerHTML = renderDiscord(rendered);
+    } catch {}
+  };
+  tpl.oninput = () => { clearTimeout(tpl._t); tpl._t = setTimeout(doPreview, 300); };
+  doPreview();
+
+  const bar = document.createElement('div');
+  bar.className = 'actions';
+  bar.innerHTML = '<button class="primary" id="esave">Save changes</button>';
+  el.appendChild(bar);
+  bar.querySelector('#esave').onclick = () => run(bar.querySelector('#esave'), 'Saving…', async () => {
+    const filters = {};
+    el.querySelectorAll('[data-f]').forEach((i) => { filters[i.dataset.f] = i.checked; });
+    const ok = await save({
+      handle: el.querySelector('#e_handle').value,
+      intervalSeconds: el.querySelector('#e_int').value,
+      linkStyle: el.querySelector('#e_link').value,
+      messageTemplate: tpl.value,
+      filters
+    });
+    if (ok) { flash($('dashmsg'), 'Saved.', 'good'); await refresh(); }
+    else flash($('dashmsg'), 'Could not save — check the values.', 'err');
+  });
+  return el;
+}
+
+boot().catch((err) => { $('hdrsub').textContent = 'Error: ' + err.message; });
+</script>
+</body>
+</html>

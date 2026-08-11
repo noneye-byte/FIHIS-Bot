@@ -1,0 +1,88 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>FIHAS-Bot</Name>
+  <Repository>fihas-bot:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>
+    Discord bot that watches an X/Twitter account (default @F_I_H_A_S) and posts an
+    fxtwitter.com link to a channel whenever it tweets, pinging whoever you configure.
+
+    Click the container icon and choose WebUI to open a step-by-step setup wizard —
+    it lists your servers, channels and roles, tests the feed sources, and previews the
+    message. Everything is also controllable from Discord with /fihas slash commands.
+
+    The setup UI is password protected. Set "Setup UI Password" below, or leave it blank
+    and a password is generated and printed in the container log on first start.
+
+    Config persists in /config so it survives updates and restarts.
+  </Overview>
+  <Category>Tools: Social:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>http://[IP]:[PORT:8080]/logo.jpg</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="Discord Bot Token" Target="DISCORD_TOKEN" Default="" Mode=""
+          Description="Bot token from the Discord Developer Portal (Bot -> Reset Token). Keep this secret."
+          Type="Variable" Display="always" Required="true" Mask="true"/>
+
+  <Config Name="Discord Application ID" Target="DISCORD_CLIENT_ID" Default="" Mode=""
+          Description="Application ID from the Discord Developer Portal (General Information)."
+          Type="Variable" Display="always" Required="true" Mask="false"/>
+
+  <Config Name="Discord Server ID" Target="DISCORD_GUILD_ID" Default="" Mode=""
+          Description="Your server ID. Strongly recommended: slash commands register instantly instead of taking up to an hour."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Setup UI Password" Target="WEB_PASSWORD" Default="" Mode=""
+          Description="Password for the setup wizard WebUI. Leave blank to have one generated and printed in the container log on first start."
+          Type="Variable" Display="always" Required="false" Mask="true"/>
+
+  <Config Name="X Handle" Target="X_HANDLE" Default="F_I_H_A_S" Mode=""
+          Description="Account to watch, without the @."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Discord Channel ID" Target="DISCORD_CHANNEL_ID" Default="" Mode=""
+          Description="Optional. Channel to post in. You can also set this later with /fihas channel set."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Ping Role IDs" Target="PING_ROLE_ID" Default="" Mode=""
+          Description="Optional. Comma-separated role IDs to ping on a new post. Also settable with /fihas ping add."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Poll Interval (seconds)" Target="POLL_INTERVAL_SECONDS" Default="120" Mode=""
+          Description="How often to check for new posts. Minimum 30."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="RSS Feed URLs" Target="RSS_URLS" Default="" Mode=""
+          Description="Optional. Comma-separated RSS feeds tried in order. Leave blank to use built-in defaults. A self-hosted RSSHub is by far the most reliable option."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <Config Name="X API Bearer Token" Target="X_BEARER_TOKEN" Default="" Mode=""
+          Description="Optional. Only works on a paid X API plan (Basic or higher); the free tier cannot read timelines. When set, it is tried before RSS."
+          Type="Variable" Display="advanced" Required="false" Mask="true"/>
+
+  <Config Name="Config Storage" Target="/config" Default="/mnt/user/appdata/fihas-bot" Mode="rw"
+          Description="Persistent config and the list of already-posted tweet IDs."
+          Type="Path" Display="always" Required="true" Mask="false"/>
+
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp"
+          Description="Setup wizard and dashboard. Also serves an unauthenticated /healthz endpoint used for the container health check."
+          Type="Port" Display="always" Required="true" Mask="false"/>
+
+  <Config Name="Timezone" Target="TZ" Default="Etc/UTC" Mode=""
+          Description="Container timezone, e.g. Europe/London."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>
