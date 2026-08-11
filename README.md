@@ -43,7 +43,8 @@ X shut off free API access to user timelines. There is no free, officially suppo
 
 By default the bot runs in `auto` mode: it uses the X API if you give it a token, then walks the RSS
 list in order until one responds. If a feed dies it transparently moves to the next, and
-`/fihas test` (or **Test sources** in the web UI) shows you which are alive right now.
+`/fihas test` (or **Test all sources** in the web UI) shows you which are alive right now, and any
+feed can be tested on its own from the same place.
 
 ### The built-in RSSHub
 
@@ -64,7 +65,7 @@ compose sidecar was never an option there.
 | **Cost** | ~150MB extra RAM, ~600MB extra image size |
 | **Turn it off** | `RSSHUB_ENABLED=false` — the bot then uses the other feeds in the list |
 | **Reach it from elsewhere** | Publish port `1200` (an *Advanced* row in the Unraid template) |
-| **Restart it by hand** | **Restart RSSHub** under **Sources** in the web UI |
+| **Restart it by hand** | **Restart RSSHub** under **RSS & sources** in the web UI |
 | **Configure it** | Any RSSHub environment variable set on the container is passed straight through |
 
 > **It still needs X credentials.** RSSHub's X route requires `TWITTER_AUTH_TOKEN` — the
@@ -73,7 +74,7 @@ compose sidecar was never an option there.
 > bot's control, which is why the public mirrors stay in the chain as fallbacks.
 
 Upgrading from an older version? Your saved feed list is left alone. Add the built-in one with
-**Use built-in feed** under **Sources** in the web UI.
+**Use built-in feed** under **RSS & sources** in the web UI.
 
 ---
 
@@ -366,6 +367,9 @@ spamming, but your channel, pings, and password all reset.
 | **Ping Role IDs** | `PING_ROLE_ID` | No | — | Comma-separated role IDs, first boot only. Easier in the wizard. |
 | **Poll Interval (seconds)** | `POLL_INTERVAL_SECONDS` | No | `120` | Minimum 30. |
 | **RSS Feed URLs** | `RSS_URLS` | No | built-ins | *Advanced.* Comma-separated, tried in order. Replaces the defaults **including the built-in RSSHub**, so list it yourself if you set this. |
+| **RSS Fetch Timeout (seconds)** | `RSS_TIMEOUT_SECONDS` | No | `20` | *Advanced.* 5–120. How long a feed has to answer before the bot tries the next one. Easier to change under **RSS & sources** in the WebUI. |
+| **RSS Items Per Fetch** | `RSS_MAX_ITEMS` | No | `20` | *Advanced.* 1–100. How many of the newest items to read from each feed. |
+| **RSS User Agent** | `RSS_USER_AGENT` | No | built-in | *Advanced.* Sent when fetching feeds; some mirrors block unfamiliar clients. |
 | **RSSHub X Auth Token** | `TWITTER_AUTH_TOKEN` | No | — | *Advanced.* `auth_token` cookie from a logged-in X session, used by the built-in RSSHub. Masked. |
 | **X API Bearer Token** | `X_BEARER_TOKEN` | No | — | *Advanced.* Paid X plans only. Tried before RSS when present. Masked. |
 | **Timezone** | `TZ` | No | `Etc/UTC` | *Advanced.* e.g. `Europe/London`. Affects log timestamps only. |
@@ -373,7 +377,9 @@ spamming, but your channel, pings, and password all reset.
 Variables marked *first boot only* seed `config.json` and are then ignored — after that the wizard,
 the dashboard and the commands are the source of truth, so the bot never fights your saved settings.
 `COMMAND_PREFIX` and `PREFIX_ENABLED` are the exception: like `X_HANDLE`, they are applied on every
-boot, so the template always wins over a value set in Discord.
+boot, so the template always wins over a value set in Discord. The three `RSS_*` fetch variables
+behave the same way, which is why they default to blank — fill one in only if you want the container
+to own that setting instead of the WebUI.
 
 Any other RSSHub variable can be added as an extra container variable — everything in the
 container's environment is passed through to the bundled RSSHub as-is.
@@ -420,7 +426,7 @@ Six steps, about a minute. Open the WebUI and log in.
 | **Welcome** | Confirms the gateway connection, counts your servers, and generates an invite link if the bot is not in one yet. |
 | **Channel** | Lists every text and announcement channel. Channels the bot **cannot post in are disabled**, so you can't pick a broken target. |
 | **Pings** | Roles as checkboxes with their real colours. `@everyone` is disabled with a warning if the bot lacks Mention Everyone. Managed (bot/booster) roles are hidden. |
-| **Source** | Choose the strategy, edit the RSS chain, and **Test these sources** live — each one reports works/failed with the reason. Shows the built-in RSSHub's state. |
+| **Source** | Choose the strategy and build the RSS chain: add a feed from the presets or by hand, reorder it, switch one off, or **Test** any single feed on the spot. **Test these sources** runs the whole chain. Shows the built-in RSSHub's state. |
 | **Options** | Handle, interval, post-type filters, link style, and the message template with a **live Discord-style preview**. |
 | **Finish** | Summary plus **Run first check**, which bootstraps without posting. |
 
@@ -439,12 +445,30 @@ re-running the wizard, no restart:
 | --- | --- |
 | **Destination** | Server and channel. Channels the bot cannot post in stay greyed out. |
 | **Pings** | `@everyone` toggle and the role checkboxes. Users added via `/fihas ping add` are preserved. |
-| **Sources** | Strategy, the RSS chain (add/edit/remove/reorder by editing), plus **Use built-in feed**, **Restart RSSHub** and **Test sources**. |
+| **RSS & sources** | Strategy and the full feed manager — see below. |
 | **Posting options** | Handle, interval, post-type filters, link style, message template with the live preview. |
 | **Commands** | Turn text commands on/off, change the prefix, and see whether Discord is actually granting the Message Content intent. |
 
 Each section saves on its own, so one bad value never blocks the rest, and a section stays open
 across a save. Invalid input is rejected with the reason rather than silently clamped.
+
+### Managing RSS feeds
+
+Detection lives or dies on the feed chain, so **RSS & sources** manages all of it without touching
+`config.json`:
+
+| | |
+| --- | --- |
+| **Order** | Feeds are tried top-down and the first one that answers wins. Use ↑ / ↓ to promote the mirror you trust. |
+| **On/off** | The checkbox parks a feed without deleting it — the poller skips it, the URL stays put for when the mirror recovers. Disabled feeds show up in a chain test as *skipped*. |
+| **Add** | Pick a ready-made feed for the handle you are watching (built-in RSSHub, `rsshub.app`, several Nitter instances) or choose *Custom* and type your own. Duplicates and non-`http(s)` URLs are flagged as you type. |
+| **Test one feed** | **Test** fetches that URL as typed — no need to save first — and reports how long it took, how many posts came back, and the newest five, each tagged **would post**, **filtered** (your post-type filters drop it) or **already seen**. A "works but nothing appears" feed is diagnosable in one click. |
+| **Fetch settings** | Timeout (5–120s), how many newest items to read per check (1–100), and the user agent to send. Slow mirrors need the first; picky ones need the last. |
+| **Built-in RSSHub** | Its live state, **Use built-in feed** to put it at the top of the chain, and **Restart RSSHub**. |
+| **Test all sources** | Runs the X API (if configured) and every enabled feed in order, reporting each. |
+
+The status card also shows how many feeds are active, and which source the last successful check
+actually used.
 
 ### Security
 
@@ -563,7 +587,8 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 | `!fihas` says you need Manage Server | Text commands require it, same as slash commands. There is no separate setting. |
 | Can't get into the web UI | Set **Setup UI Password** in the template and restart; the env var always overrides the stored password. |
 | WebUI button does nothing | Something else is on host port 8080. Change the host side of the port mapping. |
-| Nothing ever posts | **Test sources**. If everything is ❌, see the next two rows. |
+| Nothing ever posts | **Test all sources** under **RSS & sources**. If everything is ❌, see the next two rows. A feed marked *skipped* is switched off — turn its checkbox back on. |
+| A feed works but nothing is announced | **Test** that feed on its own: each of the newest posts is tagged **would post**, **filtered** or **already seen**. All *filtered* means your post-type filters are dropping them; all *already seen* means there is genuinely nothing new. |
 | Built-in RSSHub shows ❌ | Almost always `Twitter API is not configured` — it needs `TWITTER_AUTH_TOKEN` for X routes. **Test sources** says so explicitly when the variable is unset. Then **Restart RSSHub** in the web UI. |
 | Port 1200 already in use | Delete the **RSSHub Port** row from the container config — the bot does not need it published — or set `RSSHUB_PORT` to something free. |
 | Container uses more RAM than expected | The bundled RSSHub accounts for ~150MB. Set `RSSHUB_ENABLED=false` if you would rather use external feeds. |

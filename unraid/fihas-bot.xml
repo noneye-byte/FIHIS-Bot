@@ -96,6 +96,18 @@
           Description="Optional. Comma-separated RSS feeds tried in order. Leave blank to use the built-in RSSHub plus public mirrors as fallbacks. Setting this replaces that list entirely."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
+  <Config Name="RSS Fetch Timeout (seconds)" Target="RSS_TIMEOUT_SECONDS" Default="" Mode=""
+          Description="Optional. How long a feed has to answer before the bot moves on to the next one, 5-120. Leave blank to manage it in the WebUI under RSS &amp; sources; a value here is re-applied on every restart."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <Config Name="RSS Items Per Fetch" Target="RSS_MAX_ITEMS" Default="" Mode=""
+          Description="Optional. How many of the newest items to read from each feed, 1-100. Leave blank to manage it in the WebUI under RSS &amp; sources."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <Config Name="RSS User Agent" Target="RSS_USER_AGENT" Default="" Mode=""
+          Description="Optional. Sent when fetching feeds; some mirrors block unfamiliar clients. Leave blank for the bot's own user agent, or edit it in the WebUI under RSS &amp; sources."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
   <Config Name="RSSHub X Auth Token" Target="TWITTER_AUTH_TOKEN" Default="" Mode=""
           Description="Optional. The auth_token cookie from a logged-in X session, used by the built-in RSSHub to read timelines. See https://docs.rsshub.app/deploy/config#x-twitter — X keeps tightening this requirement. Any other RSSHub variable can be added here as an extra variable too."
           Type="Variable" Display="advanced" Required="false" Mask="true"/>

@@ -75,7 +75,9 @@ const feed = `<?xml version="1.0" encoding="UTF-8"?>
 <description>a reply</description><pubDate>Sat, 09 Aug 2025 08:00:00 GMT</pubDate></item>
 </channel></rss>`;
 
+let lastUserAgent = null;
 const server = http.createServer((req, res) => {
+  lastUserAgent = req.headers['user-agent'];
   res.writeHead(200, { 'Content-Type': 'application/rss+xml' });
   res.end(feed);
 });
@@ -88,6 +90,50 @@ check('sorted newest first', items[0].id === '1900000000000000002', items[0].id)
 check('retweet detected', items[1].isRetweet === true);
 check('reply detected', items[2].isReply === true);
 check('normal post not flagged', !items[0].isRetweet && !items[0].isReply);
+
+/* --- RSS fetch settings ---------------------------------------------------- */
+check('rss fetch defaults present',
+  config.source.rss.timeoutSeconds === 20 && config.source.rss.maxItems === 20
+    && config.source.rss.userAgent === '',
+  JSON.stringify(config.source.rss));
+check('no feeds disabled by default', config.source.disabledUrls.length === 0);
+check('blank user agent falls back to the built-in one',
+  rss.optionsFrom(config).userAgent === rss.DEFAULT_USER_AGENT);
+
+await rss.fetchTweets('F_I_H_A_S', {
+  url,
+  ...rss.optionsFrom({ source: { rss: { timeoutSeconds: 10, maxItems: 5, userAgent: 'Custom/9.9' } } })
+});
+check('configured user agent reaches the mirror', lastUserAgent === 'Custom/9.9', String(lastUserAgent));
+
+/* --- enabling and disabling feeds ------------------------------------------ */
+await store.update((c) => {
+  c.source.rssUrls = ['http://a.example/rss', 'http://b.example/rss'];
+  c.source.disabledUrls = ['http://b.example/rss', 'http://gone.example/rss'];
+});
+check('enabled chain skips disabled feeds',
+  store.enabledRssUrls(store.get()).join() === 'http://a.example/rss',
+  store.enabledRssUrls(store.get()).join());
+store.pruneDisabledUrls(store.get());
+check('pruning drops disabled entries with no feed',
+  store.get().source.disabledUrls.join() === 'http://b.example/rss',
+  store.get().source.disabledUrls.join());
+check('isFeedEnabled agrees with the list',
+  store.isFeedEnabled(store.get(), 'http://a.example/rss')
+    && !store.isFeedEnabled(store.get(), 'http://b.example/rss'));
+
+/* A handle change rewrites the chain; a parked feed must stay parked. */
+await store.update((c) => {
+  c.source.rssUrls = ['http://m.example/F_I_H_A_S/rss', 'http://n.example/F_I_H_A_S/rss'];
+  c.source.disabledUrls = ['http://n.example/F_I_H_A_S/rss'];
+  store.rewriteFeedHandle(c, 'F_I_H_A_S', 'someone_else');
+});
+check('handle change rewrites every feed URL',
+  store.get().source.rssUrls.every((u) => u.includes('someone_else')),
+  store.get().source.rssUrls.join());
+check('a disabled feed stays disabled across a handle change',
+  store.get().source.disabledUrls.join() === 'http://n.example/someone_else/rss',
+  store.get().source.disabledUrls.join());
 
 /* --- source fallback chain ------------------------------------------------ */
 const result = await poller.fetchFromSources({

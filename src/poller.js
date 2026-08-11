@@ -1,4 +1,4 @@
-import { get, save, markSeen, hasSeen } from './store.js';
+import { get, save, markSeen, hasSeen, enabledRssUrls } from './store.js';
 import * as xapi from './sources/xapi.js';
 import * as rss from './sources/rss.js';
 
@@ -40,7 +40,7 @@ function renderMessage(config, tweet) {
     .trim();
 }
 
-function passesFilters(config, tweet) {
+export function passesFilters(config, tweet) {
   if (tweet.isRetweet && !config.filters.retweets) return false;
   if (tweet.isReply && !config.filters.replies) return false;
   if (tweet.isQuote && !config.filters.quotes) return false;
@@ -62,17 +62,25 @@ export async function fetchFromSources(config) {
       run: () => xapi.fetchTweets(config.handle, { sinceId: config.highWaterMark })
     });
   }
+  const rssOptions = rss.optionsFrom(config);
+  const feeds = enabledRssUrls(config);
   if (mode === 'auto' || mode === 'rss') {
-    for (const url of config.source.rssUrls) {
-      attempts.push({ label: `rss:${url}`, run: () => rss.fetchTweets(config.handle, { url }) });
+    for (const url of feeds) {
+      attempts.push({
+        label: `rss:${url}`,
+        run: () => rss.fetchTweets(config.handle, { url, ...rssOptions })
+      });
     }
   }
 
   if (!attempts.length) {
+    const allDisabled = !feeds.length && config.source.rssUrls.length > 0;
     throw new Error(
       mode === 'xapi'
         ? 'Source mode is "xapi" but X_BEARER_TOKEN is not set.'
-        : 'No sources configured. Add an RSS URL with /fihas source add.'
+        : allDisabled
+          ? 'Every RSS feed is disabled. Re-enable one in the web UI, or add another with /fihas source add.'
+          : 'No sources configured. Add an RSS URL with /fihas source add.'
     );
   }
 

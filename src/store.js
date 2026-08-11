@@ -26,7 +26,20 @@ export const DEFAULTS = {
     rssUrls: [
       'https://rsshub.app/twitter/user/F_I_H_A_S',
       'https://nitter.privacydev.net/F_I_H_A_S/rss'
-    ]
+    ],
+    // Feeds kept in the list but skipped. Parking a flaky mirror this way beats
+    // deleting it and having to remember the URL when it recovers.
+    disabledUrls: [],
+    // How the feeds are fetched. Mirrors differ wildly in how slow they are and
+    // how much they dislike a default user agent, so these are worth exposing.
+    rss: {
+      timeoutSeconds: 20,
+      // Only the newest few items ever matter; a mirror that returns 200 is
+      // otherwise 200 items to parse and diff on every poll.
+      maxItems: 20,
+      // Blank means the built-in one.
+      userAgent: ''
+    }
   },
   filters: {
     retweets: true,
@@ -58,6 +71,15 @@ export const DEFAULTS = {
 // commands must agree on what is valid.
 export const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 export const PREFIX_RE = /^[^\s@#`]{1,16}$/;
+export const RSS_LIMITS = {
+  timeoutSeconds: [5, 120],
+  maxItems: [1, 100],
+  userAgentMaxLength: 200
+};
+
+function inRange(value, [min, max]) {
+  return Number.isFinite(value) && value >= min && value <= max;
+}
 
 let cache = null;
 let writeQueue = Promise.resolve();
@@ -114,6 +136,22 @@ export async function load() {
     // reliable source available. Public mirrors stay behind it as a fallback.
     cache.source.rssUrls.unshift(rsshub.localFeedUrl(cache.handle));
   }
+  if (process.env.RSS_TIMEOUT_SECONDS) {
+    const parsed = Number.parseInt(process.env.RSS_TIMEOUT_SECONDS, 10);
+    if (inRange(parsed, RSS_LIMITS.timeoutSeconds)) cache.source.rss.timeoutSeconds = parsed;
+  }
+  if (process.env.RSS_MAX_ITEMS) {
+    const parsed = Number.parseInt(process.env.RSS_MAX_ITEMS, 10);
+    if (inRange(parsed, RSS_LIMITS.maxItems)) cache.source.rss.maxItems = parsed;
+  }
+  // Blank is "not set" rather than "clear it": compose files pass the variable
+  // through as an empty string, which would otherwise wipe the UI's value on
+  // every restart.
+  if (process.env.RSS_USER_AGENT) {
+    cache.source.rss.userAgent = process.env.RSS_USER_AGENT
+      .trim()
+      .slice(0, RSS_LIMITS.userAgentMaxLength);
+  }
   if (process.env.COMMAND_PREFIX) {
     cache.prefix = process.env.COMMAND_PREFIX.trim();
   }
@@ -133,8 +171,42 @@ export async function load() {
     cache.webPasswordGenerated = false;
   }
 
+  // A URL that is no longer in the chain cannot be "disabled" — env overrides
+  // and hand-edited config files both get here.
+  pruneDisabledUrls(cache);
+
   await save();
   return cache;
+}
+
+/** Drops disabled entries whose feed is gone, so the two lists cannot drift. */
+export function pruneDisabledUrls(config) {
+  config.source.disabledUrls = (config.source.disabledUrls ?? []).filter((u) =>
+    config.source.rssUrls.includes(u)
+  );
+  return config.source.disabledUrls;
+}
+
+/** The feeds the poller is actually allowed to try, in order. */
+export function enabledRssUrls(config) {
+  const disabled = new Set(config.source.disabledUrls ?? []);
+  return config.source.rssUrls.filter((url) => !disabled.has(url));
+}
+
+/**
+ * Points every feed URL at a new handle after the watched account changes.
+ * The disabled list holds URLs verbatim, so it has to be rewritten in step or
+ * a parked feed silently comes back to life.
+ */
+export function rewriteFeedHandle(config, previous, next) {
+  const swap = (url) => url.replace(new RegExp(previous, 'gi'), next);
+  config.source.rssUrls = config.source.rssUrls.map(swap);
+  config.source.disabledUrls = (config.source.disabledUrls ?? []).map(swap);
+  pruneDisabledUrls(config);
+}
+
+export function isFeedEnabled(config, url) {
+  return !(config.source.disabledUrls ?? []).includes(url);
 }
 
 export function get() {

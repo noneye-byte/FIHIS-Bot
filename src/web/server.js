@@ -3,7 +3,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { get, update, DEFAULTS, HANDLE_RE, PREFIX_RE } from '../store.js';
+import {
+  get,
+  update,
+  hasSeen,
+  isFeedEnabled,
+  pruneDisabledUrls,
+  rewriteFeedHandle,
+  DEFAULTS,
+  HANDLE_RE,
+  PREFIX_RE,
+  RSS_LIMITS
+} from '../store.js';
 import * as poller from '../poller.js';
 import * as rsshub from '../rsshub.js';
 import * as xapi from '../sources/xapi.js';
@@ -136,6 +147,25 @@ function collectGuilds() {
   });
 }
 
+/**
+ * Ready-made feed URLs for the account being watched, so adding a mirror is a
+ * click instead of remembering someone's URL scheme.
+ */
+function feedPresets(handle) {
+  const encoded = encodeURIComponent(handle);
+  const presets = [];
+  if (rsshub.isBundled()) {
+    presets.push({ label: 'Built-in RSSHub', url: rsshub.localFeedUrl(handle), local: true });
+  }
+  presets.push(
+    { label: 'RSSHub (public instance)', url: `https://rsshub.app/twitter/user/${encoded}` },
+    { label: 'Nitter — privacydev', url: `https://nitter.privacydev.net/${encoded}/rss` },
+    { label: 'Nitter — poast', url: `https://nitter.poast.org/${encoded}/rss` },
+    { label: 'Nitter — 1d4', url: `https://nitter.1d4.us/${encoded}/rss` }
+  );
+  return presets;
+}
+
 function publicState() {
   const config = get();
   return {
@@ -147,6 +177,10 @@ function publicState() {
     guilds: collectGuilds(),
     poller: poller.status(),
     rsshub: { ...rsshub.status(), feedUrl: rsshub.localFeedUrl(config.handle) },
+    // Everything the feed manager needs to build and validate rows itself.
+    feedPresets: feedPresets(config.handle),
+    rssLimits: RSS_LIMITS,
+    rssDefaultUserAgent: rss.DEFAULT_USER_AGENT,
     // 'active' | 'denied' | 'off' — whether prefix commands can read message text.
     messageIntent: runtime.messageIntent,
     // Why Discord is unreachable, when it is. The UI surfaces this because the
@@ -198,9 +232,7 @@ async function applyPatch(patch) {
         c.seen = [];
         c.highWaterMark = null;
         c.bootstrapped = false;
-        c.source.rssUrls = c.source.rssUrls.map((u) =>
-          u.replace(new RegExp(previous, 'gi'), handle)
-        );
+        rewriteFeedHandle(c, previous, handle);
         restartPoller = true;
       }
     }
@@ -252,8 +284,56 @@ async function applyPatch(patch) {
         const cleaned = patch.rssUrls.map((u) => String(u).trim()).filter(Boolean);
         const bad = cleaned.filter((u) => !/^https?:\/\//i.test(u));
         if (bad.length) errors.push(`Not valid http(s) URLs: ${bad.join(', ')}`);
-        c.source.rssUrls = cleaned.filter((u) => /^https?:\/\//i.test(u));
+        // A duplicate feed is only ever a slower poll — the second copy is tried
+        // with the same result as the first.
+        c.source.rssUrls = [...new Set(cleaned.filter((u) => /^https?:\/\//i.test(u)))];
+        pruneDisabledUrls(c);
+        restartPoller = true;
       }
+    }
+
+    if (patch.rssDisabled !== undefined) {
+      if (!Array.isArray(patch.rssDisabled)) {
+        errors.push('Disabled feeds must be a list.');
+      } else {
+        c.source.disabledUrls = [...new Set(patch.rssDisabled.map((u) => String(u).trim()))];
+        pruneDisabledUrls(c);
+        restartPoller = true;
+      }
+    }
+
+    if (patch.rssSettings !== undefined) {
+      const s = patch.rssSettings ?? {};
+      if (s.timeoutSeconds !== undefined) {
+        const [min, max] = RSS_LIMITS.timeoutSeconds;
+        const seconds = Number.parseInt(s.timeoutSeconds, 10);
+        if (!Number.isFinite(seconds) || seconds < min || seconds > max) {
+          errors.push(`Feed timeout must be between ${min} and ${max} seconds.`);
+        } else {
+          c.source.rss.timeoutSeconds = seconds;
+        }
+      }
+      if (s.maxItems !== undefined) {
+        const [min, max] = RSS_LIMITS.maxItems;
+        const items = Number.parseInt(s.maxItems, 10);
+        if (!Number.isFinite(items) || items < min || items > max) {
+          errors.push(`Items per fetch must be between ${min} and ${max}.`);
+        } else {
+          c.source.rss.maxItems = items;
+        }
+      }
+      if (s.userAgent !== undefined) {
+        const agent = String(s.userAgent).trim();
+        if (agent.length > RSS_LIMITS.userAgentMaxLength) {
+          errors.push(`User agent must be ${RSS_LIMITS.userAgentMaxLength} characters or fewer.`);
+        } else if (/[\r\n]/.test(agent)) {
+          // It goes straight into a request header.
+          errors.push('User agent cannot contain line breaks.');
+        } else {
+          c.source.rss.userAgent = agent;
+        }
+      }
+      restartPoller = true;
     }
 
     if (patch.filters !== undefined) {
@@ -294,6 +374,17 @@ async function applyPatch(patch) {
 }
 
 /* --------------------------------------------------------------- handlers */
+
+// RSSHub answers "Twitter API is not configured" until it gets a session
+// cookie, which is not obvious from the HTTP error the feed parser sees.
+function rsshubTokenHint() {
+  return {
+    source: 'Hint',
+    skipped: true,
+    detail:
+      'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything. See https://docs.rsshub.app/deploy/config#x-twitter'
+  };
+}
 
 async function handleLogin(req, res) {
   const ip = clientIp(req);
@@ -344,28 +435,67 @@ async function handleAction(req, res) {
         results.push({ source: 'X API', skipped: true, detail: 'No X_BEARER_TOKEN set' });
       }
       let localFailed = false;
+      const options = rss.optionsFrom(config);
       for (const url of config.source.rssUrls) {
         const local = rsshub.isLocalUrl(url);
         const source = local ? `${url} (built-in RSSHub)` : url;
+        if (!isFeedEnabled(config, url)) {
+          results.push({ source, skipped: true, detail: 'Disabled — the poller skips this feed' });
+          continue;
+        }
         try {
-          const tweets = await rss.fetchTweets(config.handle, { url });
+          const tweets = await rss.fetchTweets(config.handle, { url, ...options });
           results.push({ source, ok: true, detail: `${tweets.length} post(s), newest ${tweets[0].id}` });
         } catch (err) {
           results.push({ source, ok: false, detail: err.message });
           localFailed ||= local;
         }
       }
-      // RSSHub answers "Twitter API is not configured" until it gets a session
-      // cookie, which is not obvious from the HTTP error the feed parser sees.
-      if (localFailed && !process.env.TWITTER_AUTH_TOKEN) {
-        results.push({
-          source: 'Hint',
-          skipped: true,
-          detail:
-            'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything. See https://docs.rsshub.app/deploy/config#x-twitter'
+      if (localFailed && !process.env.TWITTER_AUTH_TOKEN) results.push(rsshubTokenHint());
+      return json(res, 200, { results });
+    }
+
+    // One feed, tested on its own and with a sample of what it would post.
+    // Testing the whole chain to find out which mirror is broken is tedious
+    // once there are more than two of them.
+    case 'feed-test': {
+      const url = String(body.url ?? '').trim();
+      if (!/^https?:\/\//i.test(url)) {
+        return json(res, 400, { error: 'That is not a valid http(s) URL.' });
+      }
+      const local = rsshub.isLocalUrl(url);
+      const startedAt = Date.now();
+      try {
+        const tweets = await rss.fetchTweets(config.handle, { url, ...rss.optionsFrom(config) });
+        return json(res, 200, {
+          ok: true,
+          url,
+          local,
+          ms: Date.now() - startedAt,
+          count: tweets.length,
+          // A preview of the newest few, flagged the way the poller would treat
+          // them, so "works but posts nothing" is diagnosable from the UI.
+          items: tweets.slice(0, 5).map((tweet) => ({
+            id: tweet.id,
+            text: (tweet.text ?? '').slice(0, 200),
+            createdAt: tweet.createdAt ? new Date(tweet.createdAt).toISOString() : null,
+            isRetweet: tweet.isRetweet,
+            isReply: tweet.isReply,
+            isQuote: tweet.isQuote,
+            filtered: !poller.passesFilters(config, tweet),
+            seen: hasSeen(config, tweet.id)
+          }))
+        });
+      } catch (err) {
+        return json(res, 200, {
+          ok: false,
+          url,
+          local,
+          ms: Date.now() - startedAt,
+          error: err.message,
+          hint: local && !process.env.TWITTER_AUTH_TOKEN ? rsshubTokenHint().detail : null
         });
       }
-      return json(res, 200, { results });
     }
 
     case 'rsshub-restart': {

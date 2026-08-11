@@ -1,5 +1,14 @@
 import { PermissionFlagsBits, EmbedBuilder } from 'discord.js';
-import { get, update, DEFAULTS, HANDLE_RE, PREFIX_RE } from './store.js';
+import {
+  get,
+  update,
+  DEFAULTS,
+  HANDLE_RE,
+  PREFIX_RE,
+  isFeedEnabled,
+  pruneDisabledUrls,
+  rewriteFeedHandle
+} from './store.js';
 import * as poller from './poller.js';
 import * as rsshub from './rsshub.js';
 import * as xapi from './sources/xapi.js';
@@ -115,11 +124,21 @@ export function sourceList() {
       }`
     );
   }
+  const fetchOpts = rss.optionsFrom(config);
+  lines.push(
+    `**Fetch:** ${fetchOpts.timeoutMs / 1000}s timeout · newest ${fetchOpts.maxItems} item(s)`
+  );
   lines.push('**RSS chain (tried in order):**');
   lines.push(
     config.source.rssUrls.length
       ? config.source.rssUrls
-          .map((u, i) => `${i + 1}. \`${u}\`${rsshub.isLocalUrl(u) ? ' _(built-in)_' : ''}`)
+          .map((u, i) => {
+            const tags = [
+              rsshub.isLocalUrl(u) ? '_(built-in)_' : '',
+              isFeedEnabled(config, u) ? '' : '_(disabled)_'
+            ].filter(Boolean);
+            return `${i + 1}. \`${u}\`${tags.length ? ` ${tags.join(' ')}` : ''}`;
+          })
           .join('\n')
       : '_empty_'
   );
@@ -179,11 +198,16 @@ export async function testSources() {
   }
 
   let localFailed = false;
+  const fetchOpts = rss.optionsFrom(config);
   for (const url of config.source.rssUrls) {
     const local = rsshub.isLocalUrl(url);
     const label = local ? `${url} (built-in RSSHub)` : url;
+    if (!isFeedEnabled(config, url)) {
+      lines.push(`⚪ \`${label}\` — disabled, skipped`);
+      continue;
+    }
     try {
-      const tweets = await rss.fetchTweets(config.handle, { url });
+      const tweets = await rss.fetchTweets(config.handle, { url, ...fetchOpts });
       lines.push(`✅ \`${label}\` — ${tweets.length} post(s), newest \`${tweets[0].id}\``);
     } catch (err) {
       lines.push(`❌ \`${label}\` — ${err.message}`);
@@ -304,6 +328,7 @@ export async function sourceChange(adding, rawUrl) {
     }
     if (!adding && idx !== -1) {
       c.source.rssUrls.splice(idx, 1);
+      pruneDisabledUrls(c);
       changed = true;
     }
   });
@@ -338,7 +363,7 @@ export async function setHandle(rawHandle) {
       c.seen = [];
       c.highWaterMark = null;
       c.bootstrapped = false;
-      c.source.rssUrls = c.source.rssUrls.map((u) => u.replace(new RegExp(previous, 'gi'), handle));
+      rewriteFeedHandle(c, previous, handle);
     }
   });
   poller.restart();

@@ -55,6 +55,23 @@ check('open sections survive a re-render', js.includes('openSections'));
 check('prefix is editable', js.includes('prefixEnabled:') && js.includes('#d_pfx'));
 check('built-in rsshub is surfaced', js.includes('rsshub-restart') && js.includes('function rsshubBlock('));
 
+/* --- RSS feed management ----------------------------------------------------
+   The feed list is the setting people come back to most, so the manager has to
+   cover the whole lifecycle without dropping to a config file. */
+for (const fn of ['feedEditor', 'feedsFromState', 'feedPatch', 'testFeed', 'feedAdder',
+  'fetchSettingsMarkup', 'fetchSettingsPatch']) {
+  check(`${fn}() defined`, js.includes(`function ${fn}(`));
+}
+check('feeds can be reordered', js.includes('data-up') && js.includes('data-down'));
+check('feeds can be disabled without deleting', js.includes('data-on') && js.includes('rssDisabled'));
+check('feeds can be removed', js.includes('data-del'));
+check('feeds can be tested one at a time', js.includes("action: 'feed-test'"));
+check('a tested feed previews what it would post', js.includes('function itemRow('));
+check('fetch settings are editable', js.includes('rssSettings:') && js.includes('_ua'));
+check('presets come from the server', js.includes('S.feedPresets'));
+check('the wizard and dashboard share the feed editor',
+  (js.match(/feedEditor\(/g) ?? []).length >= 3, `${(js.match(/feedEditor\(/g) ?? []).length} uses`);
+
 /* --- output escaping -------------------------------------------------------
    Guild, channel and role names come from Discord and land in innerHTML, so
    the escape helper must cover the dangerous characters. */

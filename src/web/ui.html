@@ -74,6 +74,26 @@
   .msg.info{background:#1b2440;border:1px solid #2c3a63;color:#b8caff}
   .urlrow{display:flex;gap:8px;margin-bottom:8px}
   .urlrow input{flex:1}
+  /* RSS feed manager */
+  .feed{background:var(--card-2);border:1px solid var(--line);border-radius:10px;
+    padding:9px 10px;margin-bottom:8px}
+  .feed.off{opacity:.62}
+  .feed.dupe,.feed.bad{border-color:#63262b}
+  .feed .top{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .feed .top input[type=text]{flex:1;min-width:180px;background:var(--card);font-size:13px;
+    font-family:ui-monospace,Consolas,monospace}
+  .feed .top input[type=checkbox]{accent-color:var(--accent);width:17px;height:17px;flex:none}
+  .feed .top button{padding:6px 9px;font-size:13px;background:var(--card);flex:none}
+  .feed .top button.icon{width:32px;padding:6px 0;text-align:center}
+  .feed .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  .feed .tags:empty{display:none}
+  .feed .note{font-size:12px;color:var(--muted);margin-top:7px;word-break:break-word}
+  .feed .note.bad{color:#ffb4b7}
+  .items{margin-top:8px;display:flex;flex-direction:column;gap:5px}
+  .item{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+  .item .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .item .when{flex:none;color:var(--muted);font-size:11.5px}
   .results{margin-top:14px;display:flex;flex-direction:column;gap:8px}
   .result{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;background:var(--card-2);
     border:1px solid var(--line);border-radius:9px;font-size:13px}
@@ -325,22 +345,189 @@ function modeSelect(id, current) {
   </select>`;
 }
 
-/* Editable list of feed URLs. Mutates `urls` in place; returns a repaint fn. */
-function urlEditor(box, urls) {
-  const paint = () => {
-    box.innerHTML = urls.map((u, i) =>
-      `<div class="urlrow"><input type="text" value="${esc(u)}" data-i="${i}">
-       <button class="small" data-del="${i}" type="button">Remove</button></div>`).join('')
-      || '<p class="hint" style="margin:0 0 8px">No feeds yet.</p>';
-    box.querySelectorAll('input').forEach((inp) => {
-      inp.oninput = () => { urls[+inp.dataset.i] = inp.value; };
+/* ------------------------------------------------------------ RSS feeds
+   The chain is ordered and each feed can be parked without losing its URL, so
+   the editor needs more than a list of text boxes: reordering, an on/off
+   toggle, and a per-feed test that says what that mirror would actually post. */
+
+/** The saved chain as [{url, enabled}], which is what the editor works on. */
+function feedsFromState() {
+  const src = S.config.source;
+  const off = new Set(src.disabledUrls ?? []);
+  return src.rssUrls.map((url) => ({ url, enabled: !off.has(url) }));
+}
+
+/** The patch fields that persist an edited chain. */
+function feedPatch(feeds) {
+  const kept = feeds.filter((f) => f.url.trim());
+  return {
+    rssUrls: kept.map((f) => f.url.trim()),
+    rssDisabled: kept.filter((f) => !f.enabled).map((f) => f.url.trim())
+  };
+}
+
+function isLocalFeed(url) {
+  return Boolean(S.rsshub?.bundled) && url.trim() === S.rsshub.feedUrl;
+}
+
+function itemRow(it) {
+  const state = it.filtered ? '<span class="pill warn">filtered</span>'
+    : it.seen ? '<span class="pill">already seen</span>'
+    : '<span class="pill ok">would post</span>';
+  const kind = it.isRetweet ? 'RT ' : it.isReply ? 'reply ' : '';
+  return `<div class="item">${state}
+    <span class="txt">${esc(kind)}${esc(it.text || it.id)}</span>
+    <span class="when">${it.createdAt ? esc(when(it.createdAt)) : ''}</span></div>`;
+}
+
+/**
+ * Mutates `feeds` in place and repaints. `onChange` is called after any edit
+ * that changes the list, so callers can refresh their own summaries.
+ */
+function feedEditor(box, feeds, onChange = () => {}) {
+  /* Badges are recomputed in place rather than by repainting: replacing the
+     row markup while a URL box has focus would swallow the click that caused
+     the blur, so "type a URL, press Test" would do nothing. */
+  const decorate = () => {
+    const seenUrls = new Set();
+    box.querySelectorAll('.feed').forEach((row, i) => {
+      const feed = feeds[i];
+      if (!feed) return;
+      const url = feed.url.trim();
+      const dupe = Boolean(url) && seenUrls.has(url);
+      if (url) seenUrls.add(url);
+      const bad = Boolean(url) && !/^https?:\/\//i.test(url);
+      row.className = `feed${feed.enabled ? '' : ' off'}${dupe ? ' dupe' : ''}${bad ? ' bad' : ''}`;
+      row.querySelector('.tags').innerHTML = [
+        isLocalFeed(url) ? '<span class="pill ok">built-in RSSHub</span>' : '',
+        feed.enabled ? '' : '<span class="pill warn">disabled — skipped</span>',
+        dupe ? '<span class="pill bad">duplicate</span>' : '',
+        bad ? '<span class="pill bad">must start with http:// or https://</span>' : ''
+      ].filter(Boolean).join('');
     });
+  };
+
+  const paint = () => {
+    if (!feeds.length) {
+      box.innerHTML = '<p class="hint" style="margin:0 0 8px">No feeds yet — add one below.</p>';
+      return;
+    }
+    box.innerHTML = feeds.map((f, i) => `
+      <div class="feed" data-i="${i}">
+        <div class="top">
+          <input type="checkbox" data-on="${i}" ${f.enabled ? 'checked' : ''} title="Enable or disable this feed">
+          <input type="text" data-url="${i}" value="${esc(f.url)}" placeholder="https://…" spellcheck="false">
+          <button class="icon" type="button" data-up="${i}" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="icon" type="button" data-down="${i}" title="Move down" ${i === feeds.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" data-test="${i}">Test</button>
+          <button class="icon" type="button" data-del="${i}" title="Remove">✕</button>
+        </div>
+        <div class="tags"></div>
+        <div class="res" data-res="${i}"></div>
+      </div>`).join('');
+    decorate();
+
+    box.querySelectorAll('[data-url]').forEach((inp) => {
+      inp.oninput = () => { feeds[+inp.dataset.url].url = inp.value; decorate(); onChange(); };
+    });
+    box.querySelectorAll('[data-on]').forEach((inp) => {
+      inp.onchange = () => { feeds[+inp.dataset.on].enabled = inp.checked; decorate(); onChange(); };
+    });
+    const move = (from, to) => {
+      if (to < 0 || to >= feeds.length) return;
+      feeds.splice(to, 0, feeds.splice(from, 1)[0]);
+      paint();
+      onChange();
+    };
+    box.querySelectorAll('[data-up]').forEach((b) => { b.onclick = () => move(+b.dataset.up, +b.dataset.up - 1); });
+    box.querySelectorAll('[data-down]').forEach((b) => { b.onclick = () => move(+b.dataset.down, +b.dataset.down + 1); });
     box.querySelectorAll('[data-del]').forEach((b) => {
-      b.onclick = () => { urls.splice(+b.dataset.del, 1); paint(); };
+      b.onclick = () => { feeds.splice(+b.dataset.del, 1); paint(); onChange(); };
+    });
+    box.querySelectorAll('[data-test]').forEach((b) => {
+      b.onclick = () => testFeed(b, feeds[+b.dataset.test], box.querySelector(`[data-res="${b.dataset.test}"]`));
     });
   };
   paint();
   return paint;
+}
+
+/** Tests one feed as typed, without saving it first. */
+async function testFeed(btn, feed, out) {
+  const url = feed.url.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    out.innerHTML = '<div class="note bad">Enter an http(s) URL first.</div>';
+    return;
+  }
+  out.innerHTML = '<div class="note">Fetching…</div>';
+  await run(btn, '…', async () => {
+    const r = await api('/api/action', { action: 'feed-test', url });
+    if (!r.ok) {
+      out.innerHTML = `<div class="note bad">Failed after ${r.ms}ms — ${esc(r.error)}</div>` +
+        (r.hint ? `<div class="note">${esc(r.hint)}</div>` : '');
+      return;
+    }
+    out.innerHTML =
+      `<div class="note">${r.count} post(s) in ${r.ms}ms${feed.enabled ? '' : ' — this feed is disabled, so the poller skips it'}</div>` +
+      `<div class="items">${r.items.map(itemRow).join('')}</div>`;
+  });
+}
+
+/** Preset picker + add button. Returns nothing; wires itself to `feeds`. */
+function feedAdder(el, feeds, repaint, onChange = () => {}) {
+  const sel = el.querySelector('[data-preset]');
+  const btn = el.querySelector('[data-add]');
+  if (!sel || !btn) return;
+  btn.onclick = () => {
+    const url = sel.value;
+    if (url && feeds.some((f) => f.url.trim() === url)) {
+      flash(msgEl(), 'That feed is already in the list.', 'err');
+      return;
+    }
+    feeds.push({ url, enabled: true });
+    repaint();
+    onChange();
+    // A blank row wants typing in straight away.
+    if (!url) el.querySelector('.feed:last-child input[type=text]')?.focus();
+  };
+}
+
+function feedAdderMarkup() {
+  const presets = S.feedPresets ?? [];
+  return `<div class="row" style="margin-top:10px">
+    <select data-preset>
+      <option value="">Custom feed — type the URL yourself</option>
+      ${presets.map((p) => `<option value="${esc(p.url)}">${esc(p.label)} — ${esc(p.url)}</option>`).join('')}
+    </select>
+    <button class="small" type="button" data-add style="flex:0 0 auto">+ Add feed</button>
+  </div>`;
+}
+
+/* Timeout / item cap / user agent — the knobs that decide whether a slow or
+   picky mirror works at all. */
+function fetchSettingsMarkup(prefix) {
+  const s = S.config.source.rss ?? {};
+  const lim = S.rssLimits ?? { timeoutSeconds: [5, 120], maxItems: [1, 100] };
+  return `<label>Fetch settings</label>
+    <div class="row">
+      <div><label for="${prefix}_to" style="margin-top:0">Timeout (seconds)</label>
+        <input type="number" id="${prefix}_to" min="${lim.timeoutSeconds[0]}" max="${lim.timeoutSeconds[1]}" value="${s.timeoutSeconds ?? 20}"></div>
+      <div><label for="${prefix}_max" style="margin-top:0">Newest items per fetch</label>
+        <input type="number" id="${prefix}_max" min="${lim.maxItems[0]}" max="${lim.maxItems[1]}" value="${s.maxItems ?? 20}"></div>
+    </div>
+    <label for="${prefix}_ua">User agent</label>
+    <input type="text" id="${prefix}_ua" value="${esc(s.userAgent ?? '')}" placeholder="${esc(S.rssDefaultUserAgent ?? '')}">
+    <p class="hint" style="margin:6px 0 0">Some mirrors block unfamiliar clients. Leave blank for the default.</p>`;
+}
+
+function fetchSettingsPatch(el, prefix) {
+  return {
+    rssSettings: {
+      timeoutSeconds: el.querySelector(`#${prefix}_to`).value,
+      maxItems: el.querySelector(`#${prefix}_max`).value,
+      userAgent: el.querySelector(`#${prefix}_ua`).value
+    }
+  };
 }
 
 /* The bundled RSSHub's state, plus why it might not be usable. */
@@ -496,24 +683,23 @@ function stepPings() {
 
 /* Step 3 — source */
 function stepSource() {
-  const urls = draft.rssUrls ?? S.config.source.rssUrls;
+  const feeds = draft.feeds ?? (draft.feeds = feedsFromState());
   const mode = draft.sourceMode ?? S.config.source.mode;
 
   const el = card('How should the bot detect new posts?',
     'X removed free API access to timelines, so the bot falls back through RSS mirrors. Test them here.',
     `<label for="mode">Strategy</label>${modeSelect('mode', mode)}
     ${S.hasXToken ? '' : '<p class="hint" style="margin:8px 0 0">No <code>X_BEARER_TOKEN</code> is set, so the X API will be skipped.</p>'}
-    <label>RSS feeds — tried in order</label>
+    <label>RSS feeds — tried in order, first one that answers wins</label>
     <div id="urls"></div>
-    <button class="small" id="addurl" type="button">+ Add feed</button>
+    ${feedAdderMarkup()}
     ${rsshubBlock()}
     <div class="results" id="testres"></div>`);
 
-  const box = el.querySelector('#urls');
-  const paint = urlEditor(box, urls);
-  el.querySelector('#addurl').onclick = () => { urls.push(''); paint(); };
+  const paint = feedEditor(el.querySelector('#urls'), feeds);
+  feedAdder(el, feeds, paint);
   wireRsshubButtons(el, (feed) => {
-    if (!urls.includes(feed)) urls.unshift(feed);
+    if (!feeds.some((f) => f.url.trim() === feed)) feeds.unshift({ url: feed, enabled: true });
     paint();
   });
 
@@ -522,9 +708,8 @@ function stepSource() {
   testBtn.type = 'button';
 
   nav(el, { onNext: async () => {
-    draft.rssUrls = urls.filter(Boolean);
     draft.sourceMode = el.querySelector('#mode').value;
-    await save({ rssUrls: draft.rssUrls, sourceMode: draft.sourceMode });
+    await save({ ...feedPatch(feeds), sourceMode: draft.sourceMode });
     step = 4; renderWizard();
   }});
   el.querySelector('.actions .left').appendChild(testBtn);
@@ -532,7 +717,7 @@ function stepSource() {
   testBtn.onclick = async () => {
     testBtn.disabled = true; testBtn.textContent = 'Testing…';
     try {
-      await save({ rssUrls: urls.filter(Boolean), sourceMode: el.querySelector('#mode').value }, true);
+      await save({ ...feedPatch(feeds), sourceMode: el.querySelector('#mode').value }, true);
       const { results } = await api('/api/action', { action: 'test' });
       el.querySelector('#testres').innerHTML = results.map(renderResult).join('');
     } catch (err) { flash($('werr'), err.message, 'err'); }
@@ -629,6 +814,15 @@ function stepFinish() {
   return el;
 }
 
+/* `rss:https://host/very/long/path` is mostly noise in a stat tile. */
+function shortSource(label) {
+  if (!label) return 'none yet';
+  if (!label.startsWith('rss:')) return label;
+  const url = label.slice(4);
+  if (isLocalFeed(url)) return 'built-in RSSHub';
+  try { return new URL(url).hostname; } catch { return url; }
+}
+
 function channelName(id) {
   for (const g of S.guilds) { const c = g.channels.find((x) => x.id === id); if (c) return c.name; }
   return id ? 'unknown' : 'not set';
@@ -681,7 +875,9 @@ function renderDash() {
     <div class="stat"><div class="k">Last check</div><div class="v">${when(c.lastCheckAt)}</div></div>
     <div class="stat"><div class="k">Last post</div><div class="v">${when(c.lastPostAt)}</div></div>
     <div class="stat"><div class="k">Interval</div><div class="v">every ${c.intervalSeconds}s</div></div>
-    <div class="stat"><div class="k">Source in use</div><div class="v">${esc(c.lastSourceUsed ?? 'none yet')}</div></div>
+    <div class="stat"><div class="k">Source in use</div><div class="v">${esc(shortSource(c.lastSourceUsed))}</div></div>
+    <div class="stat"><div class="k">RSS feeds</div><div class="v">${feedsFromState().filter((f) => f.enabled).length}
+      of ${c.source.rssUrls.length} active</div></div>
     <div class="stat"><div class="k">Commands</div><div class="v">/fihas${c.prefixEnabled
       ? ` · ${esc(c.prefix)}${S.messageIntent === 'active' ? '' : ' <span class="pill warn">inactive</span>'}` : ''}</div></div>
     ${c.lastError ? `<div class="stat" style="grid-column:1/-1;border-color:#63262b">
@@ -808,36 +1004,56 @@ function secPings() {
 
 function secSources() {
   const c = S.config;
-  const urls = [...c.source.rssUrls];
-  const el = section('src', 'Sources', `${c.source.mode} · ${urls.length} feed(s)`,
+  const feeds = feedsFromState();
+  const live = feeds.filter((f) => f.enabled).length;
+  const el = section('src', 'RSS & sources',
+    `${esc(c.source.mode)} · ${live}/${feeds.length} feed(s) active`,
     `<label for="d_mode">Strategy</label>${modeSelect('d_mode', c.source.mode)}
      ${S.hasXToken ? '' : '<p class="hint" style="margin:8px 0 0">No <code>X_BEARER_TOKEN</code> is set, so the X API is skipped.</p>'}
-     <label>RSS feeds — tried in order</label>
+     <label>RSS feeds — tried in order, first one that answers wins</label>
      <div id="d_urls"></div>
-     <button class="small" id="d_addurl" type="button">+ Add feed</button>
+     <p class="hint" id="d_feedsum" style="margin:2px 0 0"></p>
+     ${feedAdderMarkup()}
      ${rsshubBlock()}
+     ${fetchSettingsMarkup('d')}
      <div class="results" id="d_testres"></div>`);
 
-  const paint = urlEditor(el.querySelector('#d_urls'), urls);
-  el.querySelector('#d_addurl').onclick = () => { urls.push(''); paint(); };
+  const summarise = () => {
+    const on = feeds.filter((f) => f.enabled && f.url.trim()).length;
+    el.querySelector('#d_feedsum').textContent = on
+      ? `${on} of ${feeds.length} feed(s) will be tried, in this order. Unsaved changes are kept when you press Save.`
+      : 'Every feed is disabled — the poller has nothing to try.';
+  };
+  const paint = feedEditor(el.querySelector('#d_urls'), feeds, summarise);
+  feedAdder(el, feeds, paint, summarise);
+  summarise();
   wireRsshubButtons(el, (feed) => {
-    if (!urls.includes(feed)) urls.unshift(feed);
+    const existing = feeds.find((f) => f.url.trim() === feed);
+    if (existing) existing.enabled = true;
+    else feeds.unshift({ url: feed, enabled: true });
     paint();
+    summarise();
   });
 
-  const bar = saveBar(el, () => ({
+  const patch = () => ({
     sourceMode: el.querySelector('#d_mode').value,
-    rssUrls: urls.filter(Boolean)
-  }));
+    ...feedPatch(feeds),
+    ...fetchSettingsPatch(el, 'd')
+  });
+
+  const bar = saveBar(el, patch);
 
   const testBtn = document.createElement('button');
   testBtn.type = 'button';
-  testBtn.textContent = 'Test sources';
+  testBtn.textContent = 'Test all sources';
   testBtn.className = 'left';
   bar.prepend(testBtn);
   testBtn.onclick = () => run(testBtn, 'Testing…', async () => {
     // Test what is on screen, not what was last saved.
-    await save({ sourceMode: el.querySelector('#d_mode').value, rssUrls: urls.filter(Boolean) }, true);
+    if (!await save(patch(), true)) {
+      flash($('dashmsg'), 'Fix the highlighted feed settings first.', 'err');
+      return;
+    }
     const { results } = await api('/api/action', { action: 'test' });
     el.querySelector('#d_testres').innerHTML = results.map(renderResult).join('');
   });

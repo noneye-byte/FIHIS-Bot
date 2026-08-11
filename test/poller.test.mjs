@@ -5,6 +5,7 @@ process.env.CONFIG_DIR = tmpConfigDir();
 
 const store = await import('../src/store.js');
 const poller = await import('../src/poller.js');
+const rss = await import('../src/sources/rss.js');
 
 /* --- a fake feed we can mutate between polls ------------------------------ */
 let items = [
@@ -39,7 +40,8 @@ poller.attach({
 const config = await store.load();
 await store.update((c) => {
   c.channelId = '12345';
-  c.source = { mode: 'rss', rssUrls: [url] };
+  c.source.mode = 'rss';
+  c.source.rssUrls = [url];
   c.pings = [{ type: 'role', id: '777' }];
   c.paused = false;
 });
@@ -105,6 +107,28 @@ await store.update((c) => { c.paused = false; });
 r = await poller.checkNow({ force: true });
 check('missed tweet delivered after resume',
   sent.length === 1 && sent[0].content.includes('1900000000000000006'), `sent ${sent.length}`);
+
+/* --- 8b. a disabled feed is skipped entirely --------------------------------- */
+await store.update((c) => { c.source.disabledUrls = [url]; });
+let disabledError = null;
+try {
+  await poller.checkNow({ force: true });
+} catch (err) {
+  disabledError = err.message;
+}
+check('disabled feed leaves nothing to try', /disabled/i.test(disabledError ?? ''), String(disabledError));
+check('enabledRssUrls hides the disabled feed', store.enabledRssUrls(store.get()).length === 0);
+await store.update((c) => { c.source.disabledUrls = []; });
+
+/* --- 8c. maxItems caps what a feed can return --------------------------------- */
+await store.update((c) => { c.source.rss.maxItems = 1; });
+const capped = await rss.fetchTweets('F_I_H_A_S', {
+  url,
+  ...rss.optionsFrom(store.get())
+});
+check('maxItems caps the fetch', capped.length === 1, `${capped.length} item(s)`);
+check('the cap keeps the newest item', capped[0].id === '1900000000000000006', capped[0].id);
+await store.update((c) => { c.source.rss.maxItems = 20; });
 
 /* --- 9. state survives a restart -------------------------------------------- */
 await store.save();

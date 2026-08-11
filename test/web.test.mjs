@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { check, tmpConfigDir, finish } from './_harness.mjs';
 
 process.env.CONFIG_DIR = tmpConfigDir();
@@ -160,6 +161,96 @@ store.get().seen = ['1', '2'];
 r = await req('/api/config', { method: 'POST', body: { handle: 'someone_else' } });
 check('handle change resets bootstrap', r.json.state.config.bootstrapped === false);
 check('handle change clears seen ids', r.json.state.config.seenCount === 0);
+
+/* --- 11b. RSS feed management ------------------------------------------------------------
+   The feed manager sends the whole chain plus the disabled subset, so ordering,
+   de-duplication and the enabled/disabled split all have to survive a round trip. */
+const FEED_A = 'http://127.0.0.1:9/a.rss';
+const FEED_B = 'http://127.0.0.1:9/b.rss';
+r = await req('/api/config', { method: 'POST', body: {
+  rssUrls: [FEED_A, FEED_B, FEED_A], rssDisabled: [FEED_B]
+}});
+check('duplicate feeds collapsed', r.json.state.config.source.rssUrls.length === 2,
+  JSON.stringify(r.json.state.config.source.rssUrls));
+check('feed order preserved', r.json.state.config.source.rssUrls[0] === FEED_A);
+check('feed can be disabled without removing it',
+  r.json.state.config.source.disabledUrls.join() === FEED_B,
+  JSON.stringify(r.json.state.config.source.disabledUrls));
+
+r = await req('/api/config', { method: 'POST', body: { rssUrls: [FEED_A] } });
+check('dropping a feed drops its disabled entry',
+  r.json.state.config.source.disabledUrls.length === 0,
+  JSON.stringify(r.json.state.config.source.disabledUrls));
+
+r = await req('/api/config', { method: 'POST', body: { rssDisabled: ['http://not-in-the-list/'] } });
+check('disabling an unknown feed is a no-op',
+  r.json.state.config.source.disabledUrls.length === 0);
+
+r = await req('/api/config', { method: 'POST', body: {
+  rssSettings: { timeoutSeconds: 45, maxItems: 5, userAgent: 'Custom/1.0' }
+}});
+check('rss fetch settings saved', r.status === 200
+  && r.json.state.config.source.rss.timeoutSeconds === 45
+  && r.json.state.config.source.rss.maxItems === 5
+  && r.json.state.config.source.rss.userAgent === 'Custom/1.0',
+  JSON.stringify(r.json.state.config.source.rss));
+
+r = await req('/api/config', { method: 'POST', body: { rssSettings: { timeoutSeconds: 1 } } });
+check('too-short timeout rejected', r.status === 400, `got ${r.status}`);
+r = await req('/api/config', { method: 'POST', body: { rssSettings: { maxItems: 0 } } });
+check('zero items per fetch rejected', r.status === 400, `got ${r.status}`);
+r = await req('/api/config', { method: 'POST', body: { rssSettings: { userAgent: 'bad\r\nX-Evil: 1' } } });
+check('header injection in the user agent rejected', r.status === 400, `got ${r.status}`);
+r = await req('/api/state');
+check('rejected rss settings left the saved ones alone',
+  r.json.config.source.rss.timeoutSeconds === 45 && r.json.config.source.rss.userAgent === 'Custom/1.0');
+check('state carries feed presets for the watched handle',
+  Array.isArray(r.json.feedPresets) && r.json.feedPresets.every((p) => p.url.includes(r.json.config.handle)),
+  JSON.stringify(r.json.feedPresets?.slice(0, 1)));
+check('state carries the rss limits', Array.isArray(r.json.rssLimits?.timeoutSeconds));
+check('state carries the default user agent the UI shows as a placeholder',
+  typeof r.json.rssDefaultUserAgent === 'string' && r.json.rssDefaultUserAgent.length > 0,
+  r.json.rssDefaultUserAgent);
+check('state carries the disabled feed list', Array.isArray(r.json.config.source.disabledUrls));
+
+/* --- 11c. single-feed test ----------------------------------------------------------------- */
+const feedItems = [
+  { id: '1900000000000000009', title: 'newest post' },
+  { id: '1900000000000000008', title: 'RT @someone: not mine' }
+];
+const feedServer = http.createServer((_req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/rss+xml' });
+  res.end(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>${feedItems
+    .map((i) => `<item><title>${i.title}</title><link>http://x.com/h/status/${i.id}</link>` +
+      `<description>${i.title}</description></item>`).join('')}</channel></rss>`);
+});
+await new Promise((res) => feedServer.listen(0, '127.0.0.1', res));
+const feedUrl = `http://127.0.0.1:${feedServer.address().port}/rss`;
+
+await req('/api/config', { method: 'POST', body: { filters: { retweets: false } } });
+r = await req('/api/action', { method: 'POST', body: { action: 'feed-test', url: feedUrl } });
+check('single feed test succeeds', r.json.ok === true && r.json.count === 2, JSON.stringify(r.json));
+check('feed test previews the newest items first',
+  r.json.items[0].id === '1900000000000000009', JSON.stringify(r.json.items?.[0]));
+check('feed test flags what the filters would drop',
+  r.json.items[1].isRetweet === true && r.json.items[1].filtered === true,
+  JSON.stringify(r.json.items?.[1]));
+
+r = await req('/api/action', { method: 'POST', body: { action: 'feed-test', url: 'javascript:alert(1)' } });
+check('feed test refuses a non-http URL', r.status === 400, `got ${r.status}`);
+r = await req('/api/action', { method: 'POST', body: { action: 'feed-test', url: 'http://127.0.0.1:9/nope' } });
+check('unreachable feed reports the error rather than throwing',
+  r.status === 200 && r.json.ok === false && typeof r.json.error === 'string', JSON.stringify(r.json));
+
+/* A disabled feed still appears in the chain test, marked as skipped. */
+await req('/api/config', { method: 'POST', body: {
+  sourceMode: 'rss', rssUrls: [feedUrl], rssDisabled: [feedUrl]
+}});
+r = await req('/api/action', { method: 'POST', body: { action: 'test' } });
+check('disabled feed is reported as skipped, not fetched',
+  r.json.results.some((x) => x.source.includes(feedUrl) && x.skipped === true),
+  JSON.stringify(r.json.results));
+feedServer.close();
 
 /* --- 12. unknown action + route -------------------------------------------------------- */
 r = await req('/api/action', { method: 'POST', body: { action: 'drop-tables' } });
