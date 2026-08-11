@@ -16,8 +16,8 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-120}
       RSS_URLS: ${RSS_URLS:-}
       # Feed fetch tuning. Left blank on purpose: these are edited under
-      # "RSS & sources" in the web UI, and a value here overrides that on every
-      # restart. Set them only if you want the container to own the setting.
+      # "RSS & sources" in the web UI. A value set here is applied whenever you
+      # change it, so set them only if you want the file to own the setting.
       RSS_TIMEOUT_SECONDS: ${RSS_TIMEOUT_SECONDS:-}
       RSS_MAX_ITEMS: ${RSS_MAX_ITEMS:-}
       RSS_USER_AGENT: ${RSS_USER_AGENT:-}

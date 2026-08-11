@@ -68,10 +68,12 @@ compose sidecar was never an option there.
 | **Restart it by hand** | **Restart RSSHub** under **RSS & sources** in the web UI |
 | **Configure it** | Any RSSHub environment variable set on the container is passed straight through |
 
-> **It still needs X credentials.** RSSHub's X route requires `TWITTER_AUTH_TOKEN` — the
-> `auth_token` cookie from a logged-in X session. X keeps tightening this, so check the current
-> [RSSHub docs](https://docs.rsshub.app/deploy/config#x-twitter). That requirement is outside this
-> bot's control, which is why the public mirrors stay in the chain as fallbacks.
+> **It still needs X credentials.** RSSHub's X route requires an `auth_token` cookie from a
+> logged-in X session, and answers **503** to everything until it has a working one. Paste it into
+> **RSS & sources → X session token** in the WebUI (or set `TWITTER_AUTH_TOKEN` on the container)
+> — the WebUI route restarts RSSHub for you, which matters because X expires these often. See the
+> current [RSSHub docs](https://docs.rsshub.app/deploy/config#x-twitter). That requirement is
+> outside this bot's control, which is why the public mirrors stay in the chain as fallbacks.
 
 Upgrading from an older version? Your saved feed list is left alone. Add the built-in one with
 **Use built-in feed** under **RSS & sources** in the web UI.
@@ -370,16 +372,22 @@ spamming, but your channel, pings, and password all reset.
 | **RSS Fetch Timeout (seconds)** | `RSS_TIMEOUT_SECONDS` | No | `20` | *Advanced.* 5–120. How long a feed has to answer before the bot tries the next one. Easier to change under **RSS & sources** in the WebUI. |
 | **RSS Items Per Fetch** | `RSS_MAX_ITEMS` | No | `20` | *Advanced.* 1–100. How many of the newest items to read from each feed. |
 | **RSS User Agent** | `RSS_USER_AGENT` | No | built-in | *Advanced.* Sent when fetching feeds; some mirrors block unfamiliar clients. |
-| **RSSHub X Auth Token** | `TWITTER_AUTH_TOKEN` | No | — | *Advanced.* `auth_token` cookie from a logged-in X session, used by the built-in RSSHub. Masked. |
+| **RSSHub X Auth Token** | `TWITTER_AUTH_TOKEN` | No | — | *Advanced.* `auth_token` cookie from a logged-in X session, used by the built-in RSSHub. **Easier to set in the WebUI** under **RSS & sources**, where it can be replaced without recreating the container. A token saved there takes precedence over this one. Masked. |
 | **X API Bearer Token** | `X_BEARER_TOKEN` | No | — | *Advanced.* Paid X plans only. Tried before RSS when present. Masked. |
 | **Timezone** | `TZ` | No | `Etc/UTC` | *Advanced.* e.g. `Europe/London`. Affects log timestamps only. |
 
-Variables marked *first boot only* seed `config.json` and are then ignored — after that the wizard,
-the dashboard and the commands are the source of truth, so the bot never fights your saved settings.
-`COMMAND_PREFIX` and `PREFIX_ENABLED` are the exception: like `X_HANDLE`, they are applied on every
-boot, so the template always wins over a value set in Discord. The three `RSS_*` fetch variables
-behave the same way, which is why they default to blank — fill one in only if you want the container
-to own that setting instead of the WebUI.
+**How variables interact with your saved settings.** Each variable is applied when it is first
+seen, and again only when *you change it in the template*. It is never re-applied on a plain
+restart. That matters on Unraid, where pressing **Apply** on a container recreates it from the
+template: without this rule, an interval or handle you had changed in the WebUI was silently
+overwritten by the old template value seconds later, which looks exactly like "the settings reset
+themselves".
+
+So: change a value in the template and the template wins; change it in the WebUI or Discord and it
+survives every restart and container edit. `WEB_PASSWORD` is the one deliberate exception — it
+always wins, so a locked-out admin can recover.
+
+A **blank** variable means "not set" and never clears a saved value.
 
 Any other RSSHub variable can be added as an extra container variable — everything in the
 container's environment is passed through to the bundled RSSHub as-is.
@@ -465,6 +473,7 @@ Detection lives or dies on the feed chain, so **RSS & sources** manages all of i
 | **Test one feed** | **Test** fetches that URL as typed — no need to save first — and reports how long it took, how many posts came back, and the newest five, each tagged **would post**, **filtered** (your post-type filters drop it) or **already seen**. A "works but nothing appears" feed is diagnosable in one click. |
 | **Fetch settings** | Timeout (5–120s), how many newest items to read per check (1–100), and the user agent to send. Slow mirrors need the first; picky ones need the last. |
 | **Built-in RSSHub** | Its live state, **Use built-in feed** to put it at the top of the chain, and **Restart RSSHub**. |
+| **X session token** | The `auth_token` cookie RSSHub needs for X routes. Paste it here and RSSHub restarts with it — no container edit, no restart. Stored in `config.json`, shown afterwards only as its last four characters. |
 | **Test all sources** | Runs the X API (if configured) and every enabled feed in order, reporting each. |
 
 The status card also shows how many feeds are active, and which source the last successful check
@@ -595,6 +604,8 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 | `403` from the X API | Free tier can't read timelines. Upgrade to Basic, or set the source mode to RSS. |
 | Pings don't notify anyone | The role may be un-mentionable, or the bot lacks **Mention Everyone** — which is also required to ping un-mentionable roles. |
 | Posted the whole backlog at once | The `bootstrapped` flag was lost. Check `/config` is actually mapped to persistent storage. |
+| Settings revert after editing the container | Fixed as of the current image: template variables are applied once, then only when you change them. If it still happens, the WebUI header will say it started with no saved settings — that means `/config` is not mapped to persistent storage, so check the **Config Storage** path. |
+| Built-in RSSHub 503s and the token is set | The `auth_token` cookie has expired — X invalidates them often. Paste a fresh one under **RSS & sources → X session token**; RSSHub restarts with it immediately. |
 | Channel is greyed out in the wizard | The bot lacks **View Channel** or **Send Messages** there. Fix it in Discord, then reload the page. |
 
 ---

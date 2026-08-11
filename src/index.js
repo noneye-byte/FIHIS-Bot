@@ -20,6 +20,7 @@ const config = await store.load();
 
 // Started before Discord so it has a head start on its own boot; the poller
 // falls through to the other feeds until it answers.
+rsshub.configure({ authToken: config.twitterAuthToken });
 rsshub.start();
 
 /* ------------------------------------------------------------ web server */

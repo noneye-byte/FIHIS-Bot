@@ -69,6 +69,11 @@ check('feeds can be tested one at a time', js.includes("action: 'feed-test'"));
 check('a tested feed previews what it would post', js.includes('function itemRow('));
 check('fetch settings are editable', js.includes('rssSettings:') && js.includes('_ua'));
 check('presets come from the server', js.includes('S.feedPresets'));
+check('the X session token is editable in the UI',
+  js.includes('function authTokenBlock(') && js.includes('twitterAuthToken:'));
+check('the token field is a password input', html.includes('type="password" data-tok'));
+check('a saved token can be cleared again', js.includes('data-cleartok'));
+check('a config that started empty is called out', js.includes('S.configFresh'));
 check('the wizard and dashboard share the feed editor',
   (js.match(/feedEditor\(/g) ?? []).length >= 3, `${(js.match(/feedEditor\(/g) ?? []).length} uses`);
 

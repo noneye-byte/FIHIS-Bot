@@ -271,6 +271,13 @@ async function refresh() {
     $('hdrsub').innerHTML +=
       '<br><span style="color:var(--bad)">/config is not writable — settings will be lost on' +
       ' restart. Check the host path mapped to /config.</span>';
+  } else if (S.configFresh) {
+    // Normal on a first run, and the one visible symptom of a /config mapping
+    // that does not survive the container being recreated.
+    $('hdrsub').innerHTML +=
+      '<br><span style="color:var(--muted)">Started with no saved settings — expected on a first' +
+      ' run. If that happens every time you edit the container, the host path mapped to' +
+      ' <code>/config</code> is not persistent.</span>';
   }
   if (S.config.setupCompleted) renderDash(); else renderWizard();
 }
@@ -549,6 +556,39 @@ function rsshubBlock() {
     <div class="row" style="margin-top:10px">
       <button class="small" type="button" id="usehub">Use built-in feed</button>
       <button class="small" type="button" id="restarthub">Restart RSSHub</button>
+    </div>
+    ${authTokenBlock()}`;
+}
+
+/* RSSHub's X route needs a session cookie of its own, and X expires them often.
+   Editing it here — rather than in the container — is the difference between a
+   30-second fix and recreating the container every time it lapses. */
+function authTokenBlock() {
+  const t = S.rsshub?.authToken ?? {};
+  const pill = !t.present ? '<span class="pill bad">not set</span>'
+    : t.source === 'env' ? '<span class="pill warn">from the container</span>'
+    : '<span class="pill ok">saved here</span>';
+  const state = !t.present
+    ? 'Without it the built-in RSSHub answers <strong>503</strong> to every X request.'
+    : t.source === 'env'
+      ? `Supplied by <code>TWITTER_AUTH_TOKEN</code> on the container (${esc(t.preview ?? '')}).
+         Saving one here replaces it until you clear it again.`
+      : `Saved in the bot's config (${esc(t.preview ?? '')})${t.envPresent
+          ? ', and used instead of the container\'s <code>TWITTER_AUTH_TOKEN</code>' : ''}.`;
+  return `<label style="margin-top:18px">X session token ${pill}</label>
+    <p class="hint" style="margin:0 0 8px">${state}
+      Log in to <a href="https://x.com" target="_blank" rel="noopener">x.com</a>, open your browser's
+      developer tools → <em>Application</em> → <em>Cookies</em> → <code>x.com</code>, and copy the
+      value of <code>auth_token</code>. Pasting the whole <code>auth_token=…</code> pair works too.
+      It is stored in <code>config.json</code> and never shown again.</p>
+    <input type="password" data-tok autocomplete="off" spellcheck="false"
+      placeholder="${t.present ? 'Saved — paste a new one to replace it' : 'auth_token cookie value'}">
+    <div class="row" style="margin-top:8px">
+      <button class="small primary" type="button" data-savetok style="flex:0 0 auto">Save token</button>
+      ${t.source === 'config'
+        ? '<button class="small" type="button" data-cleartok style="flex:0 0 auto">Clear</button>'
+        : ''}
+      <span style="flex:1"></span>
     </div>`;
 }
 
@@ -559,6 +599,23 @@ function wireRsshubButtons(el, onUse) {
   if (restart) restart.onclick = () => run(restart, 'Restarting…', async () => {
     const r = await api('/api/action', { action: 'rsshub-restart' });
     flash(msgEl(), r.ok ? 'RSSHub restarting — give it up to a minute.' : r.error, r.ok ? 'good' : 'err');
+  });
+
+  const input = el.querySelector('[data-tok]');
+  const saveTok = el.querySelector('[data-savetok]');
+  if (saveTok) saveTok.onclick = () => run(saveTok, 'Saving…', async () => {
+    if (!input.value.trim()) return flash(msgEl(), 'Paste the auth_token value first.', 'err');
+    if (!await save({ twitterAuthToken: input.value })) return;
+    input.value = '';
+    flash(msgEl(), 'Token saved. RSSHub is restarting with it — give it up to a minute, then test the feed.', 'good');
+    await refresh();
+  });
+
+  const clearTok = el.querySelector('[data-cleartok]');
+  if (clearTok) clearTok.onclick = () => run(clearTok, 'Clearing…', async () => {
+    if (!await save({ twitterAuthToken: '' })) return;
+    flash(msgEl(), 'Token cleared. RSSHub is restarting without it.', 'good');
+    await refresh();
   });
 }
 

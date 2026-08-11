@@ -13,7 +13,8 @@ import {
   DEFAULTS,
   HANDLE_RE,
   PREFIX_RE,
-  RSS_LIMITS
+  RSS_LIMITS,
+  AUTH_TOKEN_RE
 } from '../store.js';
 import * as poller from '../poller.js';
 import * as rsshub from '../rsshub.js';
@@ -187,6 +188,7 @@ function publicState() {
     // alternative is an admin staring at "Not connected" with no reason given.
     fault: runtime.fault,
     configReadOnly: runtime.configReadOnly,
+    configFresh: runtime.configFresh,
     config: {
       handle: config.handle,
       guildId: config.guildId,
@@ -214,10 +216,25 @@ function publicState() {
 
 /* ----------------------------------------------------------- config patch */
 
+/**
+ * Accepts what people actually paste from a browser's cookie inspector: the
+ * bare value, `auth_token=abc…`, a whole cookie header, or any of those in
+ * quotes. Returns null when nothing usable is in there.
+ */
+export function normaliseAuthToken(raw) {
+  let value = String(raw ?? '').trim();
+  if (!value) return '';
+  const named = value.match(/auth_token\s*=\s*([^;,\s"']+)/i);
+  if (named) value = named[1];
+  value = value.replace(/^["']|["']$/g, '').replace(/;+$/, '').trim();
+  return value;
+}
+
 async function applyPatch(patch) {
   const errors = [];
   const config = get();
   let restartPoller = false;
+  let restartRsshub = false;
 
   await update((c) => {
     if (patch.handle !== undefined) {
@@ -367,9 +384,30 @@ async function applyPatch(patch) {
     if (patch.prefixEnabled !== undefined) c.prefixEnabled = Boolean(patch.prefixEnabled);
 
     if (patch.setupCompleted !== undefined) c.setupCompleted = Boolean(patch.setupCompleted);
+
+    // The X session cookie for the bundled RSSHub. An empty value clears it and
+    // falls back to whatever the container provides, if anything.
+    if (patch.twitterAuthToken !== undefined) {
+      const token = normaliseAuthToken(patch.twitterAuthToken);
+      if (token && !AUTH_TOKEN_RE.test(token)) {
+        errors.push(
+          'That does not look like an auth_token cookie — paste the cookie value itself, with no spaces.'
+        );
+      } else if (token !== c.twitterAuthToken) {
+        c.twitterAuthToken = token;
+        restartRsshub = true;
+      }
+    }
   });
 
   if (restartPoller) poller.restart();
+  if (restartRsshub) {
+    // RSSHub only reads its environment at startup, so a new token means a new
+    // process. Restarting it here is what makes the token editable without
+    // touching the container at all.
+    rsshub.configure({ authToken: get().twitterAuthToken });
+    rsshub.restart();
+  }
   return errors;
 }
 
@@ -384,7 +422,7 @@ function rsshubTokenHint() {
   return {
     source: 'Hint',
     skipped: true,
-    detail: process.env.TWITTER_AUTH_TOKEN
+    detail: rsshub.effectiveAuthToken()
       ? 'The built-in RSSHub answers 503 whenever a route fails, and its X route fails when the auth_token cookie is expired or rejected — X invalidates them often. Log in to X again, copy a fresh auth_token cookie into TWITTER_AUTH_TOKEN, restart the container, then use Restart RSSHub. The container log under [rsshub] carries the underlying error. See https://docs.rsshub.app/deploy/config#x-twitter'
       : 'The built-in RSSHub needs TWITTER_AUTH_TOKEN — the auth_token cookie from a logged-in X session — before its X routes return anything, and answers 503 until it has one. See https://docs.rsshub.app/deploy/config#x-twitter'
   };

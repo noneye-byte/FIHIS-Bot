@@ -213,6 +213,44 @@ check('state carries the default user agent the UI shows as a placeholder',
   r.json.rssDefaultUserAgent);
 check('state carries the disabled feed list', Array.isArray(r.json.config.source.disabledUrls));
 
+/* --- 11d. the X session token for the bundled RSSHub ---------------------------------------
+   It is a credential, so the API takes it and never gives it back. */
+const rsshubModule = await import('../src/rsshub.js');
+const TOKEN = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+
+r = await req('/api/state');
+check('no token reported before one is set', r.json.rsshub.authToken.present === false,
+  JSON.stringify(r.json.rsshub.authToken));
+
+r = await req('/api/config', { method: 'POST', body: { twitterAuthToken: TOKEN } });
+check('token accepted', r.status === 200 && r.json.errors.length === 0, JSON.stringify(r.json.errors));
+check('state never echoes the token back', !JSON.stringify(r.json).includes(TOKEN));
+check('state confirms a token is loaded and where from',
+  r.json.state.rsshub.authToken.present === true && r.json.state.rsshub.authToken.source === 'config',
+  JSON.stringify(r.json.state.rsshub.authToken));
+check('only the tail is shown, to identify it',
+  r.json.state.rsshub.authToken.preview === '…5678', r.json.state.rsshub.authToken.preview);
+check('rsshub is given the saved token', rsshubModule.effectiveAuthToken() === TOKEN);
+check('the stored config holds it', store.get().twitterAuthToken === TOKEN);
+
+// A whole cookie pair is what you get from copying the row in devtools.
+r = await req('/api/config', { method: 'POST', body: {
+  twitterAuthToken: ` auth_token=${TOKEN}; `
+}});
+check('a pasted auth_token=… pair is unwrapped', store.get().twitterAuthToken === TOKEN,
+  store.get().twitterAuthToken);
+
+r = await req('/api/config', { method: 'POST', body: { twitterAuthToken: 'not a token' } });
+check('a value that is clearly not a cookie is rejected', r.status === 400, `got ${r.status}`);
+check('the rejected value did not replace the good one', store.get().twitterAuthToken === TOKEN);
+
+r = await req('/api/config', { method: 'POST', body: { twitterAuthToken: '' } });
+check('an empty value clears the token', store.get().twitterAuthToken === ''
+  && r.json.state.rsshub.authToken.present === false,
+  JSON.stringify(r.json.state.rsshub.authToken));
+check('rsshub falls back to the container after a clear',
+  rsshubModule.effectiveAuthToken() === '', rsshubModule.effectiveAuthToken());
+
 /* --- 11c. single-feed test ----------------------------------------------------------------- */
 const feedItems = [
   { id: '1900000000000000009', title: 'newest post' },

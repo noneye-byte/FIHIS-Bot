@@ -6,6 +6,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const SUITES = [
   'store.test.mjs',
+  'config.test.mjs',
   'poller.test.mjs',
   'prefix.test.mjs',
   'web.test.mjs',

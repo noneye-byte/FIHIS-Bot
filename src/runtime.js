@@ -24,7 +24,14 @@ export const runtime = {
    * True when /config could not be written. Settings that look saved in the UI
    * are actually being discarded, which is worth shouting about.
    */
-  configReadOnly: false
+  configReadOnly: false,
+
+  /**
+   * True when this boot found no config.json and started from defaults. Normal
+   * on a first run; on any later one it means /config is not the persistent
+   * path the previous container wrote to.
+   */
+  configFresh: false
 };
 
 export function setMessageIntent(value) {
@@ -37,4 +44,8 @@ export function setFault(code, message) {
 
 export function setConfigReadOnly(value) {
   runtime.configReadOnly = Boolean(value);
+}
+
+export function setConfigFresh(value) {
+  runtime.configFresh = Boolean(value);
 }

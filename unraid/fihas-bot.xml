@@ -97,7 +97,7 @@
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <Config Name="RSS Fetch Timeout (seconds)" Target="RSS_TIMEOUT_SECONDS" Default="" Mode=""
-          Description="Optional. How long a feed has to answer before the bot moves on to the next one, 5-120. Leave blank to manage it in the WebUI under RSS &amp; sources; a value here is re-applied on every restart."
+          Description="Optional. How long a feed has to answer before the bot moves on to the next one, 5-120. Leave blank to manage it in the WebUI under RSS &amp; sources; a value here is applied whenever you change it in this template."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <Config Name="RSS Items Per Fetch" Target="RSS_MAX_ITEMS" Default="" Mode=""
@@ -109,7 +109,7 @@
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
   <Config Name="RSSHub X Auth Token" Target="TWITTER_AUTH_TOKEN" Default="" Mode=""
-          Description="Optional. The auth_token cookie from a logged-in X session, used by the built-in RSSHub to read timelines. See https://docs.rsshub.app/deploy/config#x-twitter — X keeps tightening this requirement. Any other RSSHub variable can be added here as an extra variable too."
+          Description="Optional. The auth_token cookie from a logged-in X session, used by the built-in RSSHub to read timelines. Without one, RSSHub answers 503 for every X request. You can also paste it into the WebUI under RSS &amp; sources, which restarts RSSHub with it straight away and takes precedence over this field — handy because X expires these often. See https://docs.rsshub.app/deploy/config#x-twitter. Any other RSSHub variable can be added here as an extra variable too."
           Type="Variable" Display="advanced" Required="false" Mask="true"/>
 
   <Config Name="X API Bearer Token" Target="X_BEARER_TOKEN" Default="" Mode=""

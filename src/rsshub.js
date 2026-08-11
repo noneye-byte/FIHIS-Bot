@@ -28,6 +28,11 @@ const READY_POLL_MS = 2_000;
 // request forever. RSSHUB_LOG=all disables the cap.
 const QUIET_LOG_LINES = 40;
 
+// The auth_token cookie RSSHub needs for X routes, when it comes from the
+// config rather than the container. Kept here rather than read from store.js
+// because store.js already imports this module.
+let savedAuthToken = null;
+
 let child = null;
 let restarts = 0;
 let restartTimer = null;
@@ -93,10 +98,42 @@ export function isLocalUrl(url) {
   }
 }
 
+/**
+ * Supplies the X credential from the config. Takes effect on the next start or
+ * restart, since RSSHub only reads its environment when it boots.
+ */
+export function configure({ authToken } = {}) {
+  savedAuthToken = authToken?.trim() || null;
+}
+
+/**
+ * The token RSSHub will actually be given. A token saved in the web UI wins
+ * over the container's, because it is the one that can be replaced without
+ * editing the container — which is the whole point of having it in the UI.
+ */
+export function effectiveAuthToken() {
+  return savedAuthToken || process.env.TWITTER_AUTH_TOKEN?.trim() || '';
+}
+
+export function authTokenSource() {
+  if (savedAuthToken) return 'config';
+  if (process.env.TWITTER_AUTH_TOKEN?.trim()) return 'env';
+  return null;
+}
+
 export function status() {
+  const token = effectiveAuthToken();
   return {
     bundled: isBundled(),
     enabled: isEnabled(),
+    // Never the value itself — just enough to confirm which token is loaded.
+    authToken: {
+      present: Boolean(token),
+      source: authTokenSource(),
+      // Both halves of a cookie pair look alike; the tail identifies it.
+      preview: token ? `…${token.slice(-4)}` : null,
+      envPresent: Boolean(process.env.TWITTER_AUTH_TOKEN?.trim())
+    },
     running: Boolean(child),
     ready: state.ready,
     port: PORT,
@@ -170,18 +207,23 @@ function spawnChild() {
   state.exitCode = null;
   state.startedAt = new Date().toISOString();
 
+  // RSSHub reads its own configuration straight from the environment, so every
+  // RSSHub variable set on the container is inherited as-is.
+  const env = {
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV || 'production',
+    PORT: String(PORT),
+    // X sends headers big enough to trip Node's default cap; RSSHub's own
+    // start script raises it for exactly this reason.
+    NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-http-header-size=32768'
+  };
+  const token = effectiveAuthToken();
+  if (token) env.TWITTER_AUTH_TOKEN = token;
+  else delete env.TWITTER_AUTH_TOKEN;
+
   child = spawn(process.execPath, [entry], {
     cwd: DIR,
-    // RSSHub reads its own configuration straight from the environment, so
-    // every RSSHub variable set on the container is inherited as-is.
-    env: {
-      ...process.env,
-      NODE_ENV: process.env.NODE_ENV || 'production',
-      PORT: String(PORT),
-      // X sends headers big enough to trip Node's default cap; RSSHub's own
-      // start script raises it for exactly this reason.
-      NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-http-header-size=32768'
-    },
+    env,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
