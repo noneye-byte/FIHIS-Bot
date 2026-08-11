@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as rsshub from './rsshub.js';
+import { setConfigReadOnly } from './runtime.js';
 
 const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
@@ -156,8 +157,18 @@ export async function save() {
     const tmp = `${CONFIG_PATH}.tmp`;
     await fs.writeFile(tmp, snapshot, 'utf8');
     await fs.rename(tmp, CONFIG_PATH);
+    setConfigReadOnly(false);
   }).catch((err) => {
-    console.error('[store] failed to persist config:', err.message);
+    // Swallowing this used to make an unwritable /config look like the settings
+    // "reset themselves" on every restart: the UI reported success, the values
+    // lived in memory until the container was recreated, and then they were gone.
+    // Flag it so the UI can say so out loud.
+    setConfigReadOnly(true);
+    console.error(
+      `[store] failed to persist config to ${CONFIG_PATH}: ${err.message}\n` +
+        '  Settings will be lost when this container restarts. Check that the host\n' +
+        '  path mapped to /config exists and is writable by the container.'
+    );
   });
   return writeQueue;
 }

@@ -149,6 +149,10 @@ function publicState() {
     rsshub: { ...rsshub.status(), feedUrl: rsshub.localFeedUrl(config.handle) },
     // 'active' | 'denied' | 'off' — whether prefix commands can read message text.
     messageIntent: runtime.messageIntent,
+    // Why Discord is unreachable, when it is. The UI surfaces this because the
+    // alternative is an admin staring at "Not connected" with no reason given.
+    fault: runtime.fault,
+    configReadOnly: runtime.configReadOnly,
     config: {
       handle: config.handle,
       guildId: config.guildId,
@@ -445,6 +449,8 @@ async function route(req, res) {
     const healthy = Boolean(client?.isReady());
     return json(res, healthy ? 200 : 503, {
       status: healthy ? 'ok' : 'disconnected',
+      fault: runtime.fault,
+      configReadOnly: runtime.configReadOnly,
       handle: config.handle,
       paused: config.paused,
       channelConfigured: Boolean(config.channelId),

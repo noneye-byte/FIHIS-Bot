@@ -258,6 +258,20 @@ Put it on the Unraid box at:
 Then **Docker** tab → **Add Container** → pick **FIHAS-Bot** from the *Template* dropdown at the top.
 Every field below is pre-filled with sensible defaults; you only have to supply the two Discord values.
 
+> **Then delete `fihas-bot.xml`.** Once you have hit Apply, Unraid has written your real settings to
+> `my-FIHAS-Bot.xml` in that same directory, and both files now claim `<Name>FIHAS-Bot</Name>`.
+> Leaving the pristine one there means an **Apply** or **Force Update** can pick it up instead of
+> yours and hand you a container with every field back at its default — blank token, port back to
+> `8080`, appdata path back to `/mnt/user/appdata/fihas-bot`. Delete it and updates keep your
+> settings:
+>
+> ```sh
+> rm /boot/config/plugins/dockerMan/templates-user/fihas-bot.xml
+> ls /boot/config/plugins/dockerMan/templates-user/   # only my-FIHAS-Bot.xml should remain
+> ```
+>
+> Re-adding the template later is only ever needed to install the container again from scratch.
+
 Prefer not to use the template? **Add Container** → toggle **Advanced View** and enter the settings
 from the reference table manually.
 
@@ -379,6 +393,18 @@ Push your change to `main` and wait for the Actions run to go green, then on Unr
 
 That re-pulls `:latest` and recreates the container. Your `/config` survives, so every setting,
 the password, and the already-posted tweet IDs carry over.
+
+**If an update resets the container's Docker settings**, the template directory has two files
+claiming the same container name and Unraid loaded the wrong one. Check:
+
+```sh
+ls /boot/config/plugins/dockerMan/templates-user/
+```
+
+`my-FIHAS-Bot.xml` is yours and is the only one that should be there. If a bare `fihas-bot.xml`
+(the copy from this repo) is sitting next to it, delete that one — see the note in
+[Install the template](#1-install-the-template). Then re-enter your settings once and they will
+stick from then on.
 
 To pin a version instead of tracking `:latest`, tag a release (`git tag v1.0.0 && git push --tags`)
 and set **Repository** to `ghcr.io/noneye-byte/fihas-bot:1.0.0`.

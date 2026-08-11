@@ -7,22 +7,12 @@ import * as rsshub from './rsshub.js';
 import { syncAvatar } from './avatar.js';
 import { command, handle as handleCommand, autocomplete } from './commands.js';
 import { handleMessage } from './prefix.js';
-import { setMessageIntent } from './runtime.js';
+import { setMessageIntent, setFault } from './runtime.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const HEALTH_PORT = Number.parseInt(process.env.HEALTH_PORT || '8080', 10);
-
-if (!TOKEN || !CLIENT_ID) {
-  console.error(
-    'DISCORD_TOKEN and DISCORD_CLIENT_ID are both required.\n' +
-      '  Get them from https://discord.com/developers/applications\n' +
-      '  - DISCORD_TOKEN     : Bot -> Reset Token\n' +
-      '  - DISCORD_CLIENT_ID : General Information -> Application ID'
-  );
-  process.exit(1);
-}
 
 const config = await store.load();
 
@@ -34,6 +24,10 @@ rsshub.start();
 
 /* ------------------------------------------------------------ web server */
 
+// Started before Discord and never stopped on a Discord failure. The setup UI
+// is the only diagnostic an Unraid admin has without opening the container log,
+// so a bad token must not take it offline — that turns one broken setting into
+// "the WebUI is gone", which is a much harder thing to debug.
 const server = await web.createServer();
 await new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -212,28 +206,53 @@ async function login() {
   await client.login(TOKEN);
 }
 
-try {
-  await login();
-} catch (err) {
-  // A bad token is the most common setup mistake, and on Unraid the container
-  // log is the only place anyone will see why the bot keeps restarting.
-  if (err.code === 'TokenInvalid') {
-    console.error(
-      'Discord rejected DISCORD_TOKEN.\n' +
-        '  - Copy it from the Developer Portal under Bot -> Reset Token.\n' +
-        '  - It is NOT the Application ID and NOT the client secret.\n' +
-        '  - Resetting the token in the portal invalidates the old one.'
-    );
-  } else if (err.code === 'DisallowedIntents') {
-    console.error('Discord rejected the gateway intents. Update the bot to the latest image.');
-  } else {
-    console.error('Could not connect to Discord:', err.message);
+// A Discord problem is a configuration problem, and the container is where the
+// configuration gets fixed. Exiting here used to take the setup UI down with it,
+// so the one page that could explain the failure disappeared exactly when it was
+// needed — and on Unraid the container then restart-looped, which reads as "the
+// WebUI stopped working" rather than "the token is wrong". Record the fault,
+// leave the UI serving, and let /healthz report unhealthy.
+if (!TOKEN || !CLIENT_ID) {
+  const missing = [!TOKEN && 'DISCORD_TOKEN', !CLIENT_ID && 'DISCORD_CLIENT_ID']
+    .filter(Boolean)
+    .join(' and ');
+  console.error(
+    `${missing} ${!TOKEN && !CLIENT_ID ? 'are' : 'is'} not set — the bot cannot reach Discord.\n` +
+      '  Get them from https://discord.com/developers/applications\n' +
+      '  - DISCORD_TOKEN     : Bot -> Reset Token\n' +
+      '  - DISCORD_CLIENT_ID : General Information -> Application ID\n' +
+      `  On Unraid: Docker -> FIHAS-Bot -> Edit. The setup UI stays up on ${uiUrl}`
+  );
+  setFault('MissingCredentials', `${missing} not set on the container.`);
+} else {
+  try {
+    await login();
+  } catch (err) {
+    // A bad token is the most common setup mistake, and on Unraid the container
+    // log is the second place anyone will look after the UI itself.
+    if (err.code === 'TokenInvalid') {
+      console.error(
+        'Discord rejected DISCORD_TOKEN.\n' +
+          '  - Copy it from the Developer Portal under Bot -> Reset Token.\n' +
+          '  - It is NOT the Application ID and NOT the client secret.\n' +
+          '  - Resetting the token in the portal invalidates the old one.'
+      );
+      setFault('TokenInvalid', 'Discord rejected DISCORD_TOKEN. Reset it in the Developer Portal.');
+    } else if (err.code === 'DisallowedIntents') {
+      console.error('Discord rejected the gateway intents. Update the bot to the latest image.');
+      setFault('DisallowedIntents', 'Discord rejected the gateway intents. Update the image.');
+    } else {
+      console.error('Could not connect to Discord:', err.message);
+      setFault(err.code || 'LoginFailed', `Could not connect to Discord: ${err.message}`);
+    }
+    // discord.js keeps async handles open after a failed login; drop the client
+    // so nothing retries against it behind our back, and unhook the modules
+    // still holding a reference to the dead one.
+    await client?.destroy().catch(() => {});
+    client = null;
+    poller.attach(null);
+    web.attach(null);
+    poller.stop();
+    console.error(`[app] staying up so the setup UI is still reachable on ${uiUrl}`);
   }
-  // process.exit() while discord.js still holds an open async handle trips a
-  // libuv assertion, so tear things down before exiting.
-  await client?.destroy().catch(() => {});
-  poller.stop();
-  rsshub.stop();
-  await closeServer();
-  process.exitCode = 1;
 }

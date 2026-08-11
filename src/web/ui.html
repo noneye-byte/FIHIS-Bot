@@ -240,9 +240,18 @@ async function refresh() {
   S = await api('/api/state');
   $('login').classList.add('hide');
   $('logout').classList.remove('hide');
+  // "Not connected" on its own sends people to the container log. When startup
+  // recorded a reason, say it here instead.
   $('hdrsub').innerHTML = S.connected
     ? `Connected as <strong>${esc(S.botTag)}</strong>`
-    : '<span style="color:var(--bad)">Not connected to Discord</span>';
+    : `<span style="color:var(--bad)">Not connected to Discord${
+        S.fault ? ` — ${esc(S.fault.message)}` : ''
+      }</span>`;
+  if (S.configReadOnly) {
+    $('hdrsub').innerHTML +=
+      '<br><span style="color:var(--bad)">/config is not writable — settings will be lost on' +
+      ' restart. Check the host path mapped to /config.</span>';
+  }
   if (S.config.setupCompleted) renderDash(); else renderWizard();
 }
 
