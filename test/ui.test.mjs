@@ -46,13 +46,26 @@ for (const endpoint of ['/api/session', '/api/login', '/api/logout', '/api/state
    Every setting the wizard collects must also be reachable from the dashboard,
    which is the only way to change one without re-running setup. */
 const js = scripts.join('\n');
-for (const builder of ['secDestination', 'secPings', 'secSources', 'secOptions', 'secCommands']) {
+for (const builder of ['secDestination', 'secPings', 'secSources', 'secOptions', 'secVoice',
+  'secCommands']) {
   check(`${builder}() defined`, js.includes(`function ${builder}(`));
   check(`${builder}() rendered on the dashboard`, new RegExp(`\\b${builder}\\b[,\\]]`).test(js));
 }
 check('sections save their own patch', js.includes('function saveBar('));
+/* The cheat-sheet under Commands is the only place the Discord surface is
+   described to an admin, so it must not advertise commands that were retired
+   when server settings became web-only. */
+for (const gone of ['source mode', 'source add', 'set interval', 'set handle']) {
+  check(`command list does not advertise "${gone}"`, !js.includes(`${gone}`), gone);
+}
 check('open sections survive a re-render', js.includes('openSections'));
 check('prefix is editable', js.includes('prefixEnabled:') && js.includes('#d_pfx'));
+/* Volume is the one voice setting, and it is web-only — the slider and the
+   number box are two views of it, so both have to exist and stay in step. */
+check('playback volume is editable', js.includes('voiceVolume:') && js.includes('#d_vol'));
+check('volume has a slider and a number box, kept in sync',
+  js.includes('#d_volr') && js.includes('range.oninput') && js.includes('num.oninput'));
+check('volume limits come from the server', js.includes('v.limits?.volume'));
 check('built-in rsshub is surfaced', js.includes('rsshub-restart') && js.includes('function rsshubBlock('));
 
 /* --- RSS feed management ----------------------------------------------------

@@ -4,9 +4,18 @@ import {
   ChannelType,
   MessageFlags
 } from 'discord.js';
-import { get } from './store.js';
 import * as actions from './actions.js';
 
+/**
+ * The Discord command surface.
+ *
+ * Deliberately narrow: Discord owns the settings that only make sense inside
+ * Discord — the destination channel, the ping list and the text-command prefix —
+ * plus the run controls (pause, resume, and the on-demand checks). Everything
+ * server-side (the watched handle, the poll interval, the source chain, filters,
+ * link style and the message template) lives in the web UI alone, so there is
+ * exactly one place those are changed and no second surface to keep in sync.
+ */
 export const command = new SlashCommandBuilder()
   .setName('fihas')
   .setDescription('Control the FIHAS tweet watcher')
@@ -23,10 +32,22 @@ export const command = new SlashCommandBuilder()
   )
   .addSubcommand((s) => s.setName('pause').setDescription('Stop posting new tweets'))
   .addSubcommand((s) => s.setName('resume').setDescription('Resume posting new tweets'))
-  .addSubcommand((s) => s.setName('settings').setDescription('Dump the full configuration'))
   .addSubcommand((s) =>
     s.setName('test').setDescription('Try every configured source and report which ones work')
   )
+  .addSubcommand((s) =>
+    s
+      .setName('play')
+      .setDescription('Play the FIHAS clip to whoever is in voice chat')
+      .addIntegerOption((o) =>
+        o
+          .setName('volume')
+          .setDescription('Volume for this play only, as a percentage (default: the saved one)')
+          .setMinValue(0)
+          .setMaxValue(200)
+      )
+  )
+  .addSubcommand((s) => s.setName('stop').setDescription('Stop the clip and leave voice'))
   .addSubcommand((s) =>
     s.setName('help').setDescription('List every command, including the text-prefix versions')
   )
@@ -78,42 +99,6 @@ export const command = new SlashCommandBuilder()
   )
   .addSubcommandGroup((g) =>
     g
-      .setName('source')
-      .setDescription('Where tweets are read from')
-      .addSubcommand((s) =>
-        s
-          .setName('mode')
-          .setDescription('Choose the fetch strategy')
-          .addStringOption((o) =>
-            o
-              .setName('mode')
-              .setDescription('auto tries the X API then falls back to RSS')
-              .setRequired(true)
-              .addChoices(
-                { name: 'auto (X API, then RSS)', value: 'auto' },
-                { name: 'xapi (official X API only)', value: 'xapi' },
-                { name: 'rss (RSS mirrors only)', value: 'rss' }
-              )
-          )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('add')
-          .setDescription('Add an RSS feed URL to the fallback chain')
-          .addStringOption((o) => o.setName('url').setDescription('RSS feed URL').setRequired(true))
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('remove')
-          .setDescription('Remove an RSS feed URL')
-          .addStringOption((o) =>
-            o.setName('url').setDescription('RSS feed URL').setRequired(true).setAutocomplete(true)
-          )
-      )
-      .addSubcommand((s) => s.setName('list').setDescription('Show the source chain'))
-  )
-  .addSubcommandGroup((g) =>
-    g
       .setName('prefix')
       .setDescription('Text commands, for when slash commands are unavailable')
       .addSubcommand((s) =>
@@ -132,79 +117,12 @@ export const command = new SlashCommandBuilder()
             o.setName('enabled').setDescription('Listen for the prefix?').setRequired(true)
           )
       )
-  )
-  .addSubcommandGroup((g) =>
-    g
-      .setName('set')
-      .setDescription('Tune the watcher')
-      .addSubcommand((s) =>
-        s
-          .setName('interval')
-          .setDescription('Seconds between checks (minimum 30)')
-          .addIntegerOption((o) =>
-            o
-              .setName('seconds')
-              .setDescription('Polling interval')
-              .setRequired(true)
-              .setMinValue(30)
-              .setMaxValue(86400)
-          )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('handle')
-          .setDescription('Which X account to watch')
-          .addStringOption((o) =>
-            o.setName('handle').setDescription('Handle without the @').setRequired(true)
-          )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('filter')
-          .setDescription('Include or exclude a post type')
-          .addStringOption((o) =>
-            o
-              .setName('type')
-              .setDescription('Which post type')
-              .setRequired(true)
-              .addChoices(
-                { name: 'retweets', value: 'retweets' },
-                { name: 'replies', value: 'replies' },
-                { name: 'quotes', value: 'quotes' }
-              )
-          )
-          .addBooleanOption((o) =>
-            o.setName('enabled').setDescription('Post them?').setRequired(true)
-          )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('link')
-          .setDescription('Which embed-fixing mirror to link')
-          .addStringOption((o) =>
-            o
-              .setName('style')
-              .setDescription('Link style')
-              .setRequired(true)
-              .addChoices(
-                { name: 'fxtwitter.com', value: 'fxtwitter' },
-                { name: 'vxtwitter.com', value: 'vxtwitter' }
-              )
-          )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('template')
-          .setDescription('Message template. Placeholders: {pings} {handle} {link} {text}')
-          .addStringOption((o) =>
-            o.setName('template').setDescription('Leave empty to reset to default')
-          )
-      )
   );
 
 // Anything that hits the network gets deferred first — Discord kills an
-// interaction that is not answered within three seconds.
-const SLOW = new Set(['check', 'latest', 'test']);
+// interaction that is not answered within three seconds, and joining a voice
+// channel is a handshake of its own.
+const SLOW = new Set(['check', 'latest', 'test', 'play']);
 
 export async function handle(interaction) {
   const group = interaction.options.getSubcommandGroup(false);
@@ -224,7 +142,7 @@ function run(interaction, key, sub) {
 
   switch (key) {
     case 'status':
-      return actions.status();
+      return actions.status(interaction.guildId);
     case 'check':
       return actions.check();
     case 'latest':
@@ -232,10 +150,14 @@ function run(interaction, key, sub) {
     case 'pause':
     case 'resume':
       return actions.pauseResume(key === 'pause');
-    case 'settings':
-      return actions.settings();
     case 'test':
       return actions.testSources();
+    case 'play':
+      return actions.playAudio(interaction.guild, interaction.member, {
+        volume: opts.getInteger('volume')
+      });
+    case 'stop':
+      return actions.stopAudio(interaction.guild);
     case 'help':
       return actions.help();
     case 'channel.set':
@@ -255,37 +177,11 @@ function run(interaction, key, sub) {
       return actions.pingClear();
     case 'ping.everyone':
       return actions.pingEveryone(interaction.guild, opts.getBoolean('enabled'));
-    case 'source.mode':
-      return actions.sourceMode(opts.getString('mode'));
-    case 'source.add':
-    case 'source.remove':
-      return actions.sourceChange(sub === 'add', opts.getString('url'));
-    case 'source.list':
-      return actions.sourceList();
     case 'prefix.set':
       return actions.setPrefix(opts.getString('prefix'));
     case 'prefix.enabled':
       return actions.setPrefixEnabled(opts.getBoolean('enabled'));
-    case 'set.interval':
-      return actions.setInterval(opts.getInteger('seconds'));
-    case 'set.handle':
-      return actions.setHandle(opts.getString('handle'));
-    case 'set.filter':
-      return actions.setFilter(opts.getString('type'), opts.getBoolean('enabled'));
-    case 'set.link':
-      return actions.setLink(opts.getString('style'));
-    case 'set.template':
-      return actions.setTemplate(opts.getString('template'));
     default:
       return { content: `Unknown command: \`${key}\`` };
   }
-}
-
-export async function autocomplete(interaction) {
-  const focused = interaction.options.getFocused(true);
-  if (focused.name !== 'url') return interaction.respond([]);
-  const urls = get().source.rssUrls.filter((u) =>
-    u.toLowerCase().includes(focused.value.toLowerCase())
-  );
-  return interaction.respond(urls.slice(0, 25).map((u) => ({ name: u.slice(0, 100), value: u })));
 }

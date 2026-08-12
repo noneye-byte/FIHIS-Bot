@@ -31,6 +31,7 @@
     border-radius:9px;color:var(--text);font:inherit;font-size:14px}
   textarea{min-height:84px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13px}
   input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  input[type=range]{accent-color:var(--accent);align-self:center;padding:0;background:none;border:0}
   .row{display:flex;gap:10px;flex-wrap:wrap}
   .row>*{flex:1;min-width:140px}
   button{padding:10px 16px;border-radius:9px;border:1px solid var(--line);background:var(--card-2);
@@ -664,7 +665,7 @@ function nav(el, { back = true, next = 'Continue', onNext, disabled = false, ext
 /* Step 0 — welcome */
 function stepWelcome() {
   const invite = S.clientId
-    ? `https://discord.com/api/oauth2/authorize?client_id=${S.clientId}&permissions=277025770496&scope=bot%20applications.commands`
+    ? `https://discord.com/api/oauth2/authorize?client_id=${S.clientId}&permissions=277028916224&scope=bot%20applications.commands`
     : null;
   const noGuilds = !S.guilds.length;
   const el = card('Welcome', 'This wizard configures everything the bot needs. It takes about a minute.',
@@ -793,7 +794,7 @@ function renderResult(r) {
 /* Step 4 — options */
 function stepOptions() {
   const c = S.config;
-  const el = card('Options', 'All of this can be changed later, here or with <code>/fihas</code> in Discord.',
+  const el = card('Options', 'All of this can be changed later on the dashboard. These are server settings, so this page is the only place they are edited.',
     `<div class="row">
       <div><label for="handle">X account to watch</label><input type="text" id="handle" value="${esc(draft.handle ?? c.handle)}"></div>
       <div><label for="interval">Check every (seconds)</label><input type="number" id="interval" min="30" max="86400" value="${draft.intervalSeconds ?? c.intervalSeconds}"></div>
@@ -964,7 +965,7 @@ function renderDash() {
   });
 
   $('dashedit').innerHTML = '';
-  for (const build of [secDestination, secPings, secSources, secOptions, secCommands]) {
+  for (const build of [secDestination, secPings, secSources, secOptions, secVoice, secCommands]) {
     $('dashedit').appendChild(build());
   }
 }
@@ -1158,6 +1159,43 @@ function secOptions() {
   return el;
 }
 
+/* Voice playback. The clip itself ships in the image and is played from Discord
+   with `/fihas play`; the only thing to configure is how loud it lands, which
+   is a server setting and so lives here rather than behind a command. */
+function secVoice() {
+  const v = S.voice ?? {};
+  const lim = v.limits?.volume ?? [0, 200];
+  const level = S.config.voice?.volume ?? 100;
+
+  const el = section('voice', 'Voice playback', `${level}%`,
+    (v.available
+      ? `<div class="result"><span class="pill ok">clip ready</span><div class="body">
+           <div class="src"><code>${esc(v.clip ?? '')}</code></div>
+           <div class="det">${v.playing
+             ? 'Playing right now. Changing the volume applies to the next play, not this one.'
+             : 'Played with <code>/fihas play</code> when someone is in a voice channel.'}</div></div></div>`
+      : `<div class="result"><span class="pill bad">no clip</span><div class="body">
+           <div class="src"><code>${esc(v.clip ?? 'audio file')}</code> is not in this image</div>
+           <div class="det">Rebuild the container from a version that ships it.</div></div></div>`) +
+    `<label for="d_vol" style="margin-top:16px">Default volume — ${lim[0]}–${lim[1]}%</label>
+     <div class="row">
+       <input type="range" id="d_volr" min="${lim[0]}" max="${lim[1]}" value="${level}" style="flex:2">
+       <input type="number" id="d_vol" min="${lim[0]}" max="${lim[1]}" value="${level}" style="flex:0 0 90px">
+     </div>
+     <p class="hint" style="margin:6px 0 0">100% is the clip exactly as recorded, which is loud in a
+       busy channel. Above 100% amplifies it and will distort. <code>/fihas play volume:25</code>
+       overrides this for one play without changing the default.</p>`);
+
+  // Slider and number box are two views of one value; neither may drift.
+  const range = el.querySelector('#d_volr');
+  const num = el.querySelector('#d_vol');
+  range.oninput = () => { num.value = range.value; };
+  num.oninput = () => { range.value = num.value; };
+
+  saveBar(el, () => ({ voiceVolume: num.value }));
+  return el;
+}
+
 function secCommands() {
   const c = S.config;
   const p = esc(c.prefix);
@@ -1185,11 +1223,14 @@ function secCommands() {
      <div class="cmds" style="margin-top:14px">
        <code>${p} help</code> · <code>${p} status</code> · <code>${p} check</code> · <code>${p} test</code><br>
        <code>${p} latest [ping]</code> · <code>${p} pause</code> · <code>${p} resume</code><br>
+       <code>${p} play [volume]</code> · <code>${p} stop</code><br>
        <code>${p} channel set #channel</code> · <code>${p} ping add @role</code><br>
-       <code>${p} source mode auto|xapi|rss</code> · <code>${p} source add &lt;url&gt;</code><br>
-       <code>${p} set interval 120</code> · <code>${p} set handle name</code>
+       <code>${p} prefix !f</code> · <code>${p} prefix off</code>
      </div>
-     <p class="hint" style="margin:12px 0 0">Prefix commands need <strong>Manage Server</strong>, same as the
+     <p class="hint" style="margin:12px 0 0">Discord only changes Discord-side settings — the channel,
+       the ping list and the prefix — plus pause and resume. The watched account, interval, sources,
+       filters, link style and template are edited here and nowhere else.</p>
+     <p class="hint" style="margin:8px 0 0">Prefix commands need <strong>Manage Server</strong>, same as the
        slash commands, and their replies are visible to the channel.</p>`);
 
   saveBar(el, () => ({

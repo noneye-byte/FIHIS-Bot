@@ -9,6 +9,7 @@ const SUITES = [
   'config.test.mjs',
   'poller.test.mjs',
   'prefix.test.mjs',
+  'voice.test.mjs',
   'web.test.mjs',
   'ui.test.mjs'
 ];

@@ -20,10 +20,17 @@ for (const opt of json.options) {
 }
 check('command serialises', json.name === 'fihas');
 check('option count within Discord limit of 25', json.options.length <= 25, `${json.options.length}`);
-check('all subcommands present', subs.length === 25, `${subs.length} subcommands`);
-for (const expected of ['status', 'help', 'channel set', 'ping everyone', 'source mode',
-  'prefix set', 'prefix enabled', 'set interval', 'set template']) {
+check('all subcommands present', subs.length === 17, `${subs.length} subcommands`);
+for (const expected of ['status', 'help', 'check', 'latest', 'test', 'pause', 'resume',
+  'play', 'stop', 'channel set', 'ping add', 'ping everyone', 'prefix set', 'prefix enabled']) {
   check(`subcommand "${expected}" registered`, subs.includes(expected), subs.join(', '));
+}
+/* Server settings are the web UI's alone, so Discord must not offer a second
+   way to change them — a stale subcommand here is exactly the drift that split
+   is meant to prevent. */
+for (const gone of ['settings', 'source mode', 'source add', 'source list',
+  'set interval', 'set handle', 'set filter', 'set link', 'set template']) {
+  check(`subcommand "${gone}" not offered in Discord`, !subs.includes(gone), subs.join(', '));
 }
 
 /* --- defaults ------------------------------------------------------------ */

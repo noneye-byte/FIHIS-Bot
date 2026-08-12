@@ -1,6 +1,6 @@
 {
   "name": "fihas-bot",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Discord bot that posts fxtwitter links whenever @F_I_H_A_S tweets, and pings whoever you tell it to.",
   "main": "src/index.js",
   "type": "module",
@@ -13,7 +13,14 @@
     "test": "node test/run.mjs"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.16.3",
+    "ffmpeg-static": "^5.3.0",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.0.8",
     "rss-parser": "^3.13.0"
+  },
+  "allowScripts": {
+    "ffmpeg-static@5.3.0": true
   }
 }

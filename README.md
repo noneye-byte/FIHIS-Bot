@@ -4,8 +4,9 @@ Watches [@F_I_H_A_S](https://x.com/F_I_H_A_S) and drops an **fxtwitter.com** lin
 channel whenever they post, pinging whoever you configure.
 
 Runs as a Docker container on Unraid. Set it up through a **web wizard** (click WebUI on the
-container), with **`/fihas` slash commands**, or with **`!fihas` text commands** in Discord — all
-three drive the same config, and none of them needs a restart to take effect.
+container). The web UI owns every server-side setting; Discord's **`/fihas` slash commands** and
+**`!fihas` text commands** cover the Discord-side ones — channel, pings, prefix — plus `pause`,
+`resume` and the on-demand checks. Nothing needs a restart to take effect.
 
 **RSSHub is built into the image**, so detection does not depend on public mirrors that everyone
 else is hammering. Nothing extra to install.
@@ -85,10 +86,10 @@ Upgrading from an older version? Your saved feed list is left alone. Add the bui
 ### Discord — bot permissions
 
 Granted by the invite link. The wizard generates one for you; this is the same link with
-`permissions=277025770496`:
+`permissions=277028916224`:
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277025770496&scope=bot%20applications.commands
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277028916224&scope=bot%20applications.commands
 ```
 
 | Permission | Needed for | Required? |
@@ -99,6 +100,8 @@ https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=27
 | **Read Message History** | Replying to a text command | Only for `!fihas` commands |
 | **Send Messages in Threads** | Posting to a thread target | Only if the channel is a thread |
 | **Mention @everyone** | `@everyone` pings, **and** pinging roles that are not "mentionable" | Only if you use those |
+| **Connect** | Joining a voice channel for `/fihas play` | Only for voice playback |
+| **Speak** | Actually playing the clip once joined | Only for voice playback |
 | **Manage Webhooks** | — | Never. Don't grant it. |
 | **Administrator** | — | Never. Don't grant it. |
 
@@ -119,6 +122,10 @@ In the [Developer Portal](https://discord.com/developers/applications) → your 
 | **Message Content** | Reading `!fihas ...` text commands | Only for text commands |
 | Server Members | — | No |
 | Presence | — | No |
+
+Voice needs no privileged intent — **Guild Voice States** is requested automatically and is not on
+that list. Without it the bot could not see who is in a voice channel, so `/fihas play` would think
+every channel was empty.
 
 Turn Message Content **on** if you want text commands. Without it the bot starts anyway, logs what
 to fix, and the web UI shows the same warning under **Commands** — `/fihas` and the web UI are
@@ -162,7 +169,7 @@ The bot needs no access to your array, your other containers, or the Docker sock
 Replace `YOUR_CLIENT_ID` and open in a browser (the wizard also generates this link for you):
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277025770496&scope=bot%20applications.commands
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=277028916224&scope=bot%20applications.commands
 ```
 
 That grants: View Channels, Send Messages, Embed Links, Read Message History, Mention Everyone,
@@ -363,6 +370,7 @@ spamming, but your channel, pings, and password all reset.
 | **Setup UI Password** | `WEB_PASSWORD` | No | generated | Password for the WebUI. Leave blank to have one generated and printed in the log. Setting it here always overrides a stored one — that is how you recover from a lockout. Masked. |
 | **Text Command Prefix** | `COMMAND_PREFIX` | No | `!fihas` | Prefix for text commands. Needs **Message Content Intent** in the Developer Portal. |
 | **Enable Text Commands** | `PREFIX_ENABLED` | No | `true` | `false` makes the bot ignore the prefix **and** never request the privileged intent. |
+| **Voice Playback Volume** | `VOICE_VOLUME` | No | `60` | Default volume for `/fihas play`, 0–200% of the clip as recorded. Usually easier to set under **Voice playback** in the WebUI. |
 | **Built-in RSSHub** | `RSSHUB_ENABLED` | No | `true` | `false` skips starting the bundled RSSHub, saving ~150MB of RAM. |
 | **X Handle** | `X_HANDLE` | No | `F_I_H_A_S` | Account to watch, without the `@`. |
 | **Discord Channel ID** | `DISCORD_CHANNEL_ID` | No | — | Seeds the target channel on first boot only. Easier to pick in the wizard. |
@@ -447,14 +455,16 @@ pings, last check/post/error, source in use, active command styles — with butt
 **Post latest**, **Pause/Resume**, **Test sources** and **Re-run setup**.
 
 Below it, every setting the wizard collects is editable in place, in collapsible sections. No
-re-running the wizard, no restart:
+re-running the wizard, no restart. This is the only place the server-side settings can be changed —
+Discord does not offer them at all:
 
 | Section | What you can change |
 | --- | --- |
-| **Destination** | Server and channel. Channels the bot cannot post in stay greyed out. |
-| **Pings** | `@everyone` toggle and the role checkboxes. Users added via `/fihas ping add` are preserved. |
-| **RSS & sources** | Strategy and the full feed manager — see below. |
-| **Posting options** | Handle, interval, post-type filters, link style, message template with the live preview. |
+| **Destination** | Server and channel. Channels the bot cannot post in stay greyed out. Also settable from Discord. |
+| **Pings** | `@everyone` toggle and the role checkboxes. Users added via `/fihas ping add` are preserved. Also settable from Discord. |
+| **RSS & sources** | Strategy and the full feed manager — see below. **Web UI only.** |
+| **Posting options** | Handle, interval, post-type filters, link style, message template with the live preview. **Web UI only.** |
+| **Voice playback** | Default volume for `/fihas play`, and whether the clip shipped in this image. **Web UI only.** |
 | **Commands** | Turn text commands on/off, change the prefix, and see whether Discord is actually granting the Message Content intent. |
 
 Each section saves on its own, so one bad value never blocks the rest, and a section stays open
@@ -492,9 +502,20 @@ it behind your existing reverse proxy with TLS, or reach it over your VPN/Tailsc
 
 ## Commands
 
-Everything is available two ways. Slash command responses are ephemeral (only you see them); text
-command replies are visible to the channel. Both require **Manage Server** — for slash commands you
-can change that in **Server Settings → Integrations → FIHAS Bot**.
+**Discord is not a second settings panel.** It changes the settings that only mean anything inside
+Discord — the destination channel, the ping list and the text-command prefix — and it runs the
+watcher: `pause`, `resume`, `check`, `latest`, `test`, `status`. Everything the watcher itself runs
+on (the account being watched, poll interval, source mode, RSS feeds and fetch tuning, post-type
+filters, link style, message template) is edited in the web UI and nowhere else, so there is one
+place to look and no chance of two surfaces disagreeing.
+
+Commands that used to change those settings — `/fihas source …`, `/fihas set interval|handle|filter|link|template`,
+`/fihas settings` — are gone. Typing the text version says where the setting moved to rather than
+failing with "unknown command".
+
+Both command styles are otherwise identical. Slash command responses are ephemeral (only you see
+them); text command replies are visible to the channel. Both require **Manage Server** — for slash
+commands you can change that in **Server Settings → Integrations → FIHAS Bot**.
 
 | | Slash | Text |
 | --- | --- | --- |
@@ -530,32 +551,60 @@ space, so `!fihas` never fires on `!fihasburger`.
 Replace `/fihas` with `!fihas` for the text version — the arguments are identical, except that
 `#channel`, `@role` and `@user` are written as mentions or raw IDs.
 
+**Run controls**
+
 | Command | What it does |
 | --- | --- |
 | `/fihas status` | State, interval, channel, last check/post, last error |
+| `/fihas pause` · `/fihas resume` | Stop and start polling |
 | `/fihas check` | Poll immediately, ignoring pause and backoff |
 | `/fihas latest [ping]` | Post the most recent tweet on demand. Defaults to **no** ping |
-| `/fihas pause` · `/fihas resume` | Stop and start polling |
 | `/fihas test` | Try every source and report which work — start here when it's quiet |
-| `/fihas settings` | Dump the raw config |
+| `/fihas play [volume]` | Play the clip in voice — see below |
+| `/fihas stop` | Stop the clip and leave the voice channel |
+| `/fihas help` | Every command, including the text versions |
+
+**Discord settings**
+
+| Command | What it does |
+| --- | --- |
 | `/fihas channel set #channel` | Set the destination. Verifies the bot can actually post there |
 | `/fihas ping add \| remove` | Add/remove a role or user from the ping list |
 | `/fihas ping list \| clear` | Show or empty the ping list |
 | `/fihas ping everyone <bool>` | Toggle `@everyone`. Checks the bot has permission first |
-| `/fihas source mode <auto\|xapi\|rss>` | Choose the fetch strategy |
-| `/fihas source add \| remove <url>` | Manage the RSS fallback chain |
-| `/fihas source list` | Show the chain in the order it is tried |
-| `/fihas set interval <seconds>` | Polling interval, minimum 30 |
-| `/fihas set handle <handle>` | Watch a different account (re-bootstraps, rewrites RSS URLs) |
-| `/fihas set filter <type> <bool>` | Include/exclude `retweets`, `replies`, `quotes` |
-| `/fihas set link <fxtwitter\|vxtwitter>` | Which embed-fixing mirror to link |
-| `/fihas set template <text>` | Message format. Placeholders: `{pings}` `{handle}` `{link}` `{text}` |
 | `/fihas prefix set <text>` | Change the text-command prefix |
 | `/fihas prefix enabled <bool>` | Turn text commands on or off |
-| `/fihas help` | Every command, including the text versions |
+
+**Web UI only** — open the container's WebUI, no Discord equivalent:
+
+| Setting | Where |
+| --- | --- |
+| Watched account, poll interval, post-type filters, link style, message template | **Posting options** |
+| Source mode, RSS feed chain, per-feed on/off and ordering, fetch timeout/items/user agent, the X session token | **RSS & sources** |
+| Default playback volume | **Voice playback** |
 
 Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwitter links,
-`!fihas` text commands on.
+`!fihas` text commands on, playback at **60%**.
+
+### Voice playback
+
+`F_I_H_A_S_audio.mp3` ships inside the image. `/fihas play` joins a voice channel and plays it:
+
+- **Where it plays.** Your own channel if you are in one, otherwise the busiest occupied channel in
+  the server. Bots sitting in a channel don't count as an audience.
+- **If nobody is in voice**, it says so and stays put rather than joining an empty channel.
+- **It leaves on its own** when the clip ends, and `/fihas stop` cuts it short. One clip per server
+  — asking again restarts it rather than stacking two copies.
+- **Volume** is a percentage of the file as recorded, `0`–`200`. `100` is loud in a busy channel,
+  which is why the default is **60**. Change the default under **Voice playback** in the web UI (or
+  `VOICE_VOLUME`); `/fihas play volume:25` overrides it for one play without saving anything.
+- **Permissions**: the bot needs **Connect** and **Speak** in that channel. Re-invite with the link
+  above if you set the bot up before voice existed — the old invite did not ask for either.
+
+Under the hood the clip is decoded to PCM so the volume can be applied, then re-encoded to Opus.
+That is why the image carries `ffmpeg-static`; the encoder (`opusscript`) and the crypto
+(`libsodium-wrappers`) are pure JavaScript on purpose, because dependencies are installed on Alpine
+and copied into the Debian-based RSSHub image, where a compiled addon would not load.
 
 ---
 
@@ -594,6 +643,9 @@ Defaults: retweets **on**, replies **off**, quotes **on**, 120s interval, fxtwit
 | `/fihas` doesn't appear in Discord | Set **Discord Server ID** and restart — global commands take up to an hour to propagate. Meanwhile use `!fihas status`. |
 | `!fihas` does nothing | Enable **MESSAGE CONTENT INTENT** (Developer Portal → Bot) and restart. The log and the web UI's **Commands** section both say so when it is missing. Also check the bot has **Read Message History** and **Send Messages** in that channel. |
 | `!fihas` says you need Manage Server | Text commands require it, same as slash commands. There is no separate setting. |
+| `/fihas play` says nobody is in voice | It only joins a channel that has a real person in it. Bots don't count. Join one and try again. |
+| `/fihas play` can't join | Grant the bot **Connect** and **Speak** in that channel, or re-invite with the link above — invites created before voice existed did not request them. |
+| The clip plays far too loudly | Lower **Voice playback → Default volume** in the WebUI. 100% is the file as recorded; the default is 60%. |
 | Can't get into the web UI | Set **Setup UI Password** in the template and restart; the env var always overrides the stored password. |
 | WebUI button does nothing | Something else is on host port 8080. Change the host side of the port mapping. |
 | Nothing ever posts | **Test all sources** under **RSS & sources**. If everything is ❌, see the next two rows. A feed marked *skipped* is switched off — turn its checkbox back on. |
@@ -620,6 +672,7 @@ src/prefix.js              !fihas text command parsing -> actions
 src/poller.js              polling loop, filters, dedupe, posting, backoff
 src/store.js               config persistence, seen-ID tracking, validation rules
 src/rsshub.js              supervises the RSSHub bundled into the image
+src/voice.js               voice channel picking, clip playback, volume
 src/runtime.js             process-wide flags (is the message intent live?)
 src/avatar.js              hash-guarded bot profile picture upload
 src/sources/xapi.js        official X API v2
@@ -630,10 +683,12 @@ test/run.mjs               test runner — npm test
 test/store.test.mjs        config, dedupe, link building, RSS parsing, fallback
 test/poller.test.mjs       full polling loop against a fake feed + stub Discord
 test/prefix.test.mjs       text command parsing, dispatch, permissions, rsshub helpers
+test/voice.test.mjs        channel picking, volume clamping, playback refusals
 test/web.test.mjs          web API, auth, input validation
 test/ui.test.mjs           setup UI markup and JavaScript
 .github/workflows/build.yml  test, build multi-arch, publish to GHCR
 unraid/fihas-bot.xml       Unraid container template
 Dockerfile                 multi-stage build on top of the official RSSHub image
 FIHAS.jpg                  app icon and bot avatar
+F_I_H_A_S_audio.mp3        the clip /fihas play sends to voice
 ```

@@ -72,6 +72,10 @@
           Description="Set to false to ignore the prefix and use slash commands only. When false the bot does not request the Message Content intent at all."
           Type="Variable" Display="always" Required="false" Mask="false"/>
 
+  <Config Name="Voice Playback Volume" Target="VOICE_VOLUME" Default="" Mode=""
+          Description="Default volume for &quot;/fihas play&quot;, 0-200, as a percentage of the clip as recorded. 100 is loud in a busy channel. Leave blank to edit it in the WebUI under Voice playback instead."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
   <Config Name="Built-in RSSHub" Target="RSSHUB_ENABLED" Default="true" Mode=""
           Description="Runs the RSSHub bundled into this image as a private feed source (about 150MB of RAM). Set to false to rely on public mirrors or your own RSSHub instead."
           Type="Variable" Display="always" Required="false" Mask="false"/>

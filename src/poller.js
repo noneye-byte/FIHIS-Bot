@@ -79,8 +79,8 @@ export async function fetchFromSources(config) {
       mode === 'xapi'
         ? 'Source mode is "xapi" but X_BEARER_TOKEN is not set.'
         : allDisabled
-          ? 'Every RSS feed is disabled. Re-enable one in the web UI, or add another with /fihas source add.'
-          : 'No sources configured. Add an RSS URL with /fihas source add.'
+          ? 'Every RSS feed is disabled. Re-enable one under "RSS & sources" in the web UI, or add another there.'
+          : 'No sources configured. Add an RSS feed under "RSS & sources" in the web UI.'
     );
   }
 

@@ -10,6 +10,10 @@ import * as actions from './actions.js';
  * Same actions, same permission requirement (Manage Server) as `/fihas`; the
  * only differences are that replies are public and that Discord must grant the
  * Message Content intent for the bot to read the text at all.
+ *
+ * The surface is the Discord-side one: run controls, the channel, the ping list
+ * and the prefix itself. Server settings belong to the web UI, and the commands
+ * that used to change them from here now point at it.
  */
 
 // Never echo a mention out of a reply: several actions quote the ping list back,
@@ -93,9 +97,12 @@ const UNKNOWN = (prefix, what) => ({
 /**
  * Runs a parsed prefix command.
  * @param {import('discord.js').Guild} guild
+ * @param {{args: string[], rest: (n: number) => string}} parsed
+ * @param {import('discord.js').GuildMember|null} member whoever sent it, so
+ *   `play` can prefer the voice channel they are already sitting in
  * @returns {Promise<object>} a message payload
  */
-export async function dispatch(guild, parsed) {
+export async function dispatch(guild, parsed, member = null) {
   const config = get();
   const [head = '', ...tail] = parsed.args;
   const cmd = head.toLowerCase();
@@ -108,7 +115,7 @@ export async function dispatch(guild, parsed) {
     case '?':
       return actions.help(config);
     case 'status':
-      return actions.status();
+      return actions.status(guild?.id ?? null);
     case 'check':
     case 'poll':
       return actions.check();
@@ -119,11 +126,18 @@ export async function dispatch(guild, parsed) {
     case 'resume':
     case 'unpause':
       return actions.pauseResume(false);
-    case 'settings':
-    case 'config':
-      return actions.settings();
     case 'test':
       return actions.testSources();
+
+    case 'play':
+    case 'sound':
+      // `play 40` sets the volume for this play only; anything else is ignored
+      // rather than rejected, so `play loud` still plays.
+      return actions.playAudio(guild, member, {
+        volume: /^\d+$/.test(tail[0] ?? '') ? Number.parseInt(tail[0], 10) : null
+      });
+    case 'stop':
+      return actions.stopAudio(guild);
 
     case 'channel': {
       // `channel set #x` and `channel #x` both read naturally.
@@ -152,19 +166,6 @@ export async function dispatch(guild, parsed) {
           return { content: `Usage: \`${config.prefix} ping add|remove|list|clear|everyone\`` };
       }
 
-    case 'source':
-      switch (sub) {
-        case 'mode':
-          return actions.sourceMode((tail[1] ?? '').toLowerCase());
-        case 'add':
-        case 'remove':
-          return actions.sourceChange(sub === 'add', tail[1]);
-        case 'list':
-          return actions.sourceList();
-        default:
-          return { content: `Usage: \`${config.prefix} source mode|add|remove|list\`` };
-      }
-
     case 'prefix': {
       if (!sub) return { content: `The prefix is \`${config.prefix}\`.` };
       const toggle = parseBool(sub);
@@ -174,34 +175,21 @@ export async function dispatch(guild, parsed) {
       return actions.setPrefix(sub === 'set' ? parsed.rest(2) : parsed.rest(1));
     }
 
+    // `set` used to carry the watcher's own settings, which the web UI now owns
+    // outright. The prefix is the one thing under it that is still a Discord
+    // setting, so that spelling keeps working and the rest says where to go.
     case 'set':
-      switch (sub) {
-        case 'interval':
-          return actions.setInterval(tail[1]);
-        case 'handle':
-          return actions.setHandle(tail[1]);
-        case 'filter': {
-          const enabled = parseBool(tail[2]);
-          if (enabled === null) {
-            return {
-              content: `Usage: \`${config.prefix} set filter retweets|replies|quotes on|off\``
-            };
-          }
-          return actions.setFilter((tail[1] ?? '').toLowerCase(), enabled);
-        }
-        case 'link':
-          return actions.setLink((tail[1] ?? '').toLowerCase());
-        case 'template':
-          // Templates contain spaces, so take the raw remainder of the line.
-          return actions.setTemplate(parsed.rest(2));
-        case 'prefix': {
-          const toggle = parseBool(tail[1]);
-          if (toggle !== null) return actions.setPrefixEnabled(toggle);
-          return actions.setPrefix(parsed.rest(2));
-        }
-        default:
-          return { content: `Usage: \`${config.prefix} set interval|handle|filter|link|template\`` };
+      if (sub === 'prefix') {
+        const toggle = parseBool(tail[1]);
+        if (toggle !== null) return actions.setPrefixEnabled(toggle);
+        return actions.setPrefix(parsed.rest(2));
       }
+      return actions.webOnly(sub ? `set ${sub}` : 'set');
+
+    case 'settings':
+    case 'config':
+    case 'source':
+      return actions.webOnly(cmd);
 
     default:
       return UNKNOWN(config.prefix, cmd);
@@ -209,8 +197,8 @@ export async function dispatch(guild, parsed) {
 }
 
 // Commands that hit the network; show a typing indicator so the channel does
-// not look dead while a feed times out.
-const SLOW = new Set(['check', 'poll', 'latest', 'test']);
+// not look dead while a feed times out or a voice handshake completes.
+const SLOW = new Set(['check', 'poll', 'latest', 'test', 'play', 'sound']);
 
 /** Wired to Events.MessageCreate. Ignores anything not addressed to us. */
 export async function handleMessage(message) {
@@ -230,7 +218,7 @@ export async function handleMessage(message) {
   }
 
   try {
-    return await reply(message, await dispatch(message.guild, parsed));
+    return await reply(message, await dispatch(message.guild, parsed, message.member));
   } catch (err) {
     console.error('[prefix] command failed:', err);
     return reply(message, { content: `Something broke: \`${String(err.message).slice(0, 300)}\`` });

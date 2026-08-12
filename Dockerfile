@@ -5,13 +5,23 @@
 ARG RSSHUB_IMAGE=diygod/rsshub:latest
 
 # ---------------------------------------------------------------- bot deps ---
-# discord.js and rss-parser are pure JavaScript, so they can be installed on a
-# small image and copied into the RSSHub base below — no native rebuild needed.
+# Every dependency is pure JavaScript, so they can be installed on a small image
+# and copied into the RSSHub base below — no native rebuild needed. That rules
+# out @discordjs/opus and sodium-native for voice: musl-built addons will not
+# load on the glibc base. opusscript and libsodium-wrappers are the portable
+# equivalents, and ffmpeg-static ships a statically linked binary that runs on
+# either libc.
 # `npm ci` (not install) so CI builds match the committed lockfile exactly.
 FROM node:20-alpine AS botdeps
 WORKDIR /bot
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
+# ffmpeg-static fetches its binary in a postinstall hook. If that is ever
+# skipped or blocked the bot still starts and only voice playback fails at the
+# moment someone asks for it, which is a terrible place to find out.
+RUN node -e "const p=require('ffmpeg-static'); \
+  if(!p||!require('fs').existsSync(p)){console.error('ffmpeg-static did not fetch a binary — voice playback would fail at runtime');process.exit(1);} \
+  console.log('bundled ffmpeg:', p);"
 
 # ----------------------------------------------------------------- runtime ---
 # Built on the official RSSHub image so a self-hosted feed bridge ships inside
@@ -26,6 +36,7 @@ COPY --from=botdeps /bot/node_modules ./node_modules
 COPY package.json ./package.json
 COPY src ./src
 COPY FIHAS.jpg ./FIHAS.jpg
+COPY F_I_H_A_S_audio.mp3 ./F_I_H_A_S_audio.mp3
 
 # Fail the build, not the deployment, if a future RSSHub image moves its
 # entrypoint out from under src/rsshub.js.

@@ -1,16 +1,8 @@
 import { PermissionFlagsBits, EmbedBuilder } from 'discord.js';
-import {
-  get,
-  update,
-  DEFAULTS,
-  HANDLE_RE,
-  PREFIX_RE,
-  isFeedEnabled,
-  pruneDisabledUrls,
-  rewriteFeedHandle
-} from './store.js';
+import { get, update, PREFIX_RE, VOICE_LIMITS, isFeedEnabled } from './store.js';
 import * as poller from './poller.js';
 import * as rsshub from './rsshub.js';
+import * as voice from './voice.js';
 import * as xapi from './sources/xapi.js';
 import * as rss from './sources/rss.js';
 import { runtime } from './runtime.js';
@@ -21,6 +13,11 @@ import { runtime } from './runtime.js';
  * Each action returns a message payload ({ content } or { embeds }) rather than
  * touching Discord itself, so the slash commands in commands.js and the prefix
  * commands in prefix.js share one implementation and can never drift apart.
+ *
+ * Only the Discord-side settings are here — channel, pings and the text-command
+ * prefix — alongside the run controls and the read-only views. The watcher's own
+ * configuration is edited exclusively in the web UI; webOnly() below is what the
+ * commands that used to change it now answer.
  */
 
 const COLOR = 0x1d9bf0;
@@ -29,9 +26,26 @@ function text(content) {
   return { content };
 }
 
+/** The answer for a setting that only the web UI owns. */
+export function webOnly(what) {
+  return text(
+    `${what ? `\`${what}\` moved to the web UI. ` : ''}Server settings — the watched account, ` +
+      'poll interval, sources and RSS feeds, post filters, link style and message template — are ' +
+      'changed there (the container maps it to port `8080`). Discord keeps the channel, the ping ' +
+      'list, the command prefix, and `pause`/`resume`.'
+  );
+}
+
 function fmtTime(iso) {
   if (!iso) return 'never';
   return `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
+}
+
+/** "**A**", "**A** and **B**", "**A**, **B** and **C**". */
+function listOf(items) {
+  const bold = items.map((i) => `**${i}**`);
+  if (bold.length < 2) return bold.join('');
+  return `${bold.slice(0, -1).join(', ')} and ${bold.at(-1)}`;
 }
 
 export function describePings(config) {
@@ -43,7 +57,8 @@ export function describePings(config) {
 
 /* -------------------------------------------------------------- read-only */
 
-export function status() {
+/** @param {string|null} guildId whose voice state to report, when asked from one */
+export function status(guildId = null) {
   const config = get();
   const p = poller.status();
   const embed = new EmbedBuilder()
@@ -73,6 +88,11 @@ export function status() {
     });
   }
 
+  const audio = voice.status(guildId ?? config.guildId);
+  if (audio.playing) {
+    embed.addFields({ name: 'Voice', value: `🔊 playing in <#${audio.channelId}>`, inline: true });
+  }
+
   if (config.lastError) {
     embed.addFields({ name: '⚠️ Last error', value: `\`\`\`${config.lastError.slice(0, 900)}\`\`\`` });
   }
@@ -91,58 +111,8 @@ function describeCommandModes(config) {
   return parts.join(' · ');
 }
 
-export function settings() {
-  const config = get();
-  const redacted = { ...config, seen: `[${config.seen.length} ids]`, webPassword: '[hidden]' };
-  const json = JSON.stringify(redacted, null, 2);
-  return text(
-    json.length > 1900
-      ? `\`\`\`json\n${json.slice(0, 1900)}\n… truncated\n\`\`\``
-      : `\`\`\`json\n${json}\n\`\`\``
-  );
-}
-
 export function pingList() {
   return text(`Currently pinging: ${describePings(get())}`);
-}
-
-export function sourceList() {
-  const config = get();
-  const hub = rsshub.status();
-  const lines = [`**Mode:** \`${config.source.mode}\``];
-  lines.push(
-    `**X API:** ${process.env.X_BEARER_TOKEN ? 'token present' : '_no token — will be skipped_'}`
-  );
-  if (hub.bundled) {
-    lines.push(
-      `**Built-in RSSHub:** ${
-        !hub.enabled
-          ? '_disabled_'
-          : hub.ready
-            ? `running on \`${hub.url}\``
-            : `_starting…_${hub.lastError ? ` (${hub.lastError})` : ''}`
-      }`
-    );
-  }
-  const fetchOpts = rss.optionsFrom(config);
-  lines.push(
-    `**Fetch:** ${fetchOpts.timeoutMs / 1000}s timeout · newest ${fetchOpts.maxItems} item(s)`
-  );
-  lines.push('**RSS chain (tried in order):**');
-  lines.push(
-    config.source.rssUrls.length
-      ? config.source.rssUrls
-          .map((u, i) => {
-            const tags = [
-              rsshub.isLocalUrl(u) ? '_(built-in)_' : '',
-              isFeedEnabled(config, u) ? '' : '_(disabled)_'
-            ].filter(Boolean);
-            return `${i + 1}. \`${u}\`${tags.length ? ` ${tags.join(' ')}` : ''}`;
-          })
-          .join('\n')
-      : '_empty_'
-  );
-  return text(lines.join('\n').slice(0, 1900));
 }
 
 /* ------------------------------------------------------------ slow / live */
@@ -227,6 +197,50 @@ export async function testSources() {
   return text(lines.join('\n').slice(0, 1900) || 'No sources configured.');
 }
 
+/* ----------------------------------------------------------------- voice */
+
+/**
+ * @param {import('discord.js').Guild} guild
+ * @param {import('discord.js').GuildMember|null} member whoever asked, so their
+ *   own channel wins over a busier one somewhere else in the server
+ */
+export async function playAudio(guild, member, { volume = null } = {}) {
+  const [min, max] = VOICE_LIMITS.volume;
+  if (volume !== null && (!Number.isFinite(volume) || volume < min || volume > max)) {
+    return text(`Volume must be between ${min} and ${max}.`);
+  }
+
+  const result = await voice.play(guild, { member, volume });
+  if (result.ok) {
+    const level = Math.round(voice.gainFrom(get(), volume) * 100);
+    return text(
+      `🔊 Playing \`${voice.clipName()}\` in <#${result.channel.id}> at **${level}%**` +
+        `${volume === null ? '' : ' (just this once)'}. Use \`stop\` to cut it short.`
+    );
+  }
+
+  switch (result.reason) {
+    case 'missing':
+      return text(
+        `\`${voice.clipName()}\` is not in this image, so there is nothing to play. Rebuild the container from a version that ships it.`
+      );
+    case 'empty':
+      return text('Nobody is in a voice channel, so there is nobody to play it to.');
+    case 'permissions':
+      return text(
+        `I can't play in <#${result.channel.id}> — grant me ${listOf(result.missing)} there first.`
+      );
+    default:
+      return text(`Could not start playback:\n\`\`\`${String(result.error).slice(0, 1800)}\`\`\``);
+  }
+}
+
+export function stopAudio(guild) {
+  return text(
+    voice.stop(guild.id) ? '⏹️ Stopped and left the voice channel.' : 'Nothing is playing.'
+  );
+}
+
 /* ------------------------------------------------------------- mutations */
 
 export async function pauseResume(paused) {
@@ -300,117 +314,6 @@ export async function pingEveryone(guild, enabled) {
   return text(`@everyone pings are now **${enabled ? 'on' : 'off'}**.`);
 }
 
-export async function sourceMode(mode) {
-  if (!['auto', 'xapi', 'rss'].includes(mode)) {
-    return text('Mode must be `auto`, `xapi` or `rss`.');
-  }
-  await update((c) => {
-    c.source.mode = mode;
-  });
-  const note =
-    mode === 'xapi' && !process.env.X_BEARER_TOKEN
-      ? '\n⚠️ `X_BEARER_TOKEN` is not set, so this mode will fail until you add it to the container.'
-      : '';
-  poller.restart();
-  return text(`Source mode set to \`${mode}\`.${note}`);
-}
-
-export async function sourceChange(adding, rawUrl) {
-  const url = String(rawUrl ?? '').trim();
-  if (!url) return text('Give me a feed URL.');
-  if (adding && !/^https?:\/\//i.test(url)) {
-    return text('That does not look like an http(s) URL.');
-  }
-  let changed = false;
-  await update((c) => {
-    const idx = c.source.rssUrls.indexOf(url);
-    if (adding && idx === -1) {
-      c.source.rssUrls.push(url);
-      changed = true;
-    }
-    if (!adding && idx !== -1) {
-      c.source.rssUrls.splice(idx, 1);
-      pruneDisabledUrls(c);
-      changed = true;
-    }
-  });
-  if (!changed) {
-    return text(adding ? 'That URL is already in the list.' : 'That URL was not in the list.');
-  }
-  return text(`${adding ? 'Added' : 'Removed'} \`${url}\`. Run \`test\` to check it.`);
-}
-
-export async function setInterval(rawSeconds) {
-  const seconds = Number.parseInt(rawSeconds, 10);
-  if (!Number.isFinite(seconds) || seconds < 30 || seconds > 86400) {
-    return text('Interval must be a whole number of seconds between 30 and 86400.');
-  }
-  await update((c) => {
-    c.intervalSeconds = seconds;
-  });
-  poller.restart();
-  return text(`Now checking every **${seconds}s**.`);
-}
-
-export async function setHandle(rawHandle) {
-  const handle = String(rawHandle ?? '').replace(/^@/, '').trim();
-  if (!HANDLE_RE.test(handle)) return text('That is not a valid X handle.');
-
-  const previous = get().handle;
-  await update((c) => {
-    c.handle = handle;
-    if (previous.toLowerCase() !== handle.toLowerCase()) {
-      // A different account makes the seen-list and high-water mark meaningless;
-      // re-bootstrap so we don't dump their backlog.
-      c.seen = [];
-      c.highWaterMark = null;
-      c.bootstrapped = false;
-      rewriteFeedHandle(c, previous, handle);
-    }
-  });
-  poller.restart();
-  return text(
-    `Now watching **@${handle}**. RSS URLs containing \`${previous}\` were rewritten — check them with \`source list\`. The next check will re-bootstrap without posting the backlog.`
-  );
-}
-
-export async function setFilter(type, enabled) {
-  if (!['retweets', 'replies', 'quotes'].includes(type)) {
-    return text('Type must be `retweets`, `replies` or `quotes`.');
-  }
-  await update((c) => {
-    c.filters[type] = enabled;
-  });
-  return text(`${type} will now be **${enabled ? 'posted' : 'ignored'}**.`);
-}
-
-export async function setLink(style) {
-  if (!['fxtwitter', 'vxtwitter'].includes(style)) {
-    return text('Style must be `fxtwitter` or `vxtwitter`.');
-  }
-  await update((c) => {
-    c.linkStyle = style;
-  });
-  return text(`Links will use **${style}.com**.`);
-}
-
-export async function setTemplate(template) {
-  const trimmed = String(template ?? '').trim();
-  if (trimmed && !trimmed.includes('{link}')) {
-    return text('The template must include `{link}`, otherwise nothing links to the post.');
-  }
-  await update((c) => {
-    c.messageTemplate = trimmed || DEFAULTS.messageTemplate;
-  });
-  const config = get();
-  const preview = config.messageTemplate
-    .replaceAll('{pings}', describePings(config))
-    .replaceAll('{handle}', config.handle)
-    .replaceAll('{link}', poller.buildLink(config, { handle: config.handle, id: '1234567890123456789' }))
-    .replaceAll('{text}', '(tweet text)');
-  return text(`Template ${trimmed ? 'updated' : 'reset'}. Preview:\n\n${preview}`);
-}
-
 export async function setPrefix(rawPrefix) {
   const prefix = String(rawPrefix ?? '').trim();
   if (!PREFIX_RE.test(prefix)) {
@@ -457,22 +360,26 @@ export function help(config = get()) {
   return text(
     [
       `**FIHAS Bot — \`${p}\` commands**`,
-      'Everything here also exists as `/fihas` slash commands and in the web UI.',
+      'Each of these also exists as a `/fihas` slash command.',
       '',
+      '**Run controls**',
       `\`${p} status\` — state, interval, channel, last check/post/error`,
+      `\`${p} pause\` · \`${p} resume\` — stop and start polling`,
       `\`${p} check\` — poll right now`,
       `\`${p} latest [ping]\` — post the newest tweet on demand`,
-      `\`${p} pause\` · \`${p} resume\` — stop and start polling`,
       `\`${p} test\` — try every source and report which work`,
-      `\`${p} settings\` — dump the raw config`,
+      `\`${p} play [volume]\` — play the clip to whoever is in voice`,
+      `\`${p} stop\` — stop the clip and leave voice`,
+      '',
+      '**Discord settings**',
       `\`${p} channel set #channel\` — where posts go`,
       `\`${p} ping add|remove @role\` · \`${p} ping list|clear\``,
       `\`${p} ping everyone on|off\``,
-      `\`${p} source mode auto|xapi|rss\` · \`${p} source add|remove <url>\` · \`${p} source list\``,
-      `\`${p} set interval <seconds>\` · \`${p} set handle <handle>\``,
-      `\`${p} set filter retweets|replies|quotes on|off\``,
-      `\`${p} set link fxtwitter|vxtwitter\` · \`${p} set template <text>\``,
-      `\`${p} set prefix <new prefix>\` · \`${p} set prefix off\``,
+      `\`${p} prefix <new prefix>\` · \`${p} prefix on|off\``,
+      '',
+      '**In the web UI only** (port `8080`): the watched account, poll interval,',
+      'source mode, RSS feeds and fetch tuning, post-type filters, link style,',
+      'the message template, and the default playback volume.',
       '',
       'Requires **Manage Server**.'
     ].join('\n')

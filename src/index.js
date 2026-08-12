@@ -4,8 +4,9 @@ import * as store from './store.js';
 import * as poller from './poller.js';
 import * as web from './web/server.js';
 import * as rsshub from './rsshub.js';
+import * as voice from './voice.js';
 import { syncAvatar } from './avatar.js';
-import { command, handle as handleCommand, autocomplete } from './commands.js';
+import { command, handle as handleCommand } from './commands.js';
 import { handleMessage } from './prefix.js';
 import { setMessageIntent, setFault } from './runtime.js';
 
@@ -80,7 +81,9 @@ let client = null;
 let wantMessageContent = config.prefixEnabled;
 
 function buildClient(withMessageContent) {
-  const intents = [GatewayIntentBits.Guilds];
+  // GuildVoiceStates is not privileged, but without it discord.js never caches
+  // who is in which voice channel, so `play` would think every channel is empty.
+  const intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
   if (withMessageContent) {
     intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
   }
@@ -139,7 +142,6 @@ async function onReady(c) {
 
 async function onInteraction(interaction) {
   try {
-    if (interaction.isAutocomplete()) return await autocomplete(interaction);
     if (!interaction.isChatInputCommand() || interaction.commandName !== 'fihas') return;
     if (!interaction.inGuild()) {
       return interaction.reply({
@@ -169,6 +171,9 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     shuttingDown = true;
     console.log(`[app] ${signal} received, shutting down`);
     poller.stop();
+    // Leave voice before the gateway goes away, or the bot lingers as a ghost
+    // member of the channel until Discord times the session out.
+    voice.stopAll();
     rsshub.stop();
     await closeServer();
     await store.save();

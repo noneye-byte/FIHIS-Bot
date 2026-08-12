@@ -55,28 +55,51 @@ r = await run('!fihas status');
 check('status returns an embed', Array.isArray(r.embeds) && r.embeds.length === 1);
 r = await run('!fihas nonsense');
 check('unknown command is reported', r.content.includes('Unknown command'));
-r = await run('!fihas settings');
-check('settings never dumps the password', !r.content.includes(config.webPassword), r.content.slice(0, 120));
+check('help no longer advertises the retired commands',
+  !(await run('!fihas help')).content.includes('set interval'));
 
-/* --- 4. mutations --------------------------------------------------------- */
-await run('!fihas set interval 90');
-check('interval applied', store.get().intervalSeconds === 90, String(store.get().intervalSeconds));
-r = await run('!fihas set interval 5');
-check('sub-30s interval refused', r.content.includes('between 30 and 86400'));
-check('interval unchanged after refusal', store.get().intervalSeconds === 90);
+/* --- 4. server settings belong to the web UI -------------------------------
+   Discord keeps the Discord-side settings and the run controls; everything the
+   watcher itself runs on is edited in the web UI only. The retired commands
+   have to say so rather than silently doing nothing or reporting nonsense. */
+const before = {
+  interval: store.get().intervalSeconds,
+  retweets: store.get().filters.retweets,
+  linkStyle: store.get().linkStyle,
+  template: store.get().messageTemplate,
+  handle: store.get().handle,
+  mode: store.get().source.mode,
+  urls: store.get().source.rssUrls.join('|')
+};
 
-await run('!fihas set filter retweets off');
-check('filter applied', store.get().filters.retweets === false);
-await run('!fihas set link vxtwitter');
-check('link style applied', store.get().linkStyle === 'vxtwitter');
+for (const line of [
+  '!fihas set interval 90',
+  '!fihas set handle someone_else',
+  '!fihas set filter retweets off',
+  '!fihas set link vxtwitter',
+  '!fihas set template Look: {link}',
+  '!fihas source mode rss',
+  '!fihas source add https://example.com/feed.rss',
+  '!fihas source list',
+  '!fihas settings',
+  '!fihas config'
+]) {
+  r = await run(line);
+  check(`"${line.slice(7)}" points at the web UI`, r.content.includes('web UI'), r.content.slice(0, 90));
+}
 
-r = await run('!fihas set template Look: {link}');
-check('template with spaces survives', store.get().messageTemplate === 'Look: {link}',
-  store.get().messageTemplate);
-r = await run('!fihas set template no placeholder');
-check('template without {link} refused', r.content.includes('{link}'));
-check('template unchanged after refusal', store.get().messageTemplate === 'Look: {link}');
+check('interval unchanged from Discord', store.get().intervalSeconds === before.interval);
+check('handle unchanged from Discord', store.get().handle === before.handle);
+check('filters unchanged from Discord', store.get().filters.retweets === before.retweets);
+check('link style unchanged from Discord', store.get().linkStyle === before.linkStyle);
+check('template unchanged from Discord', store.get().messageTemplate === before.template);
+check('source mode unchanged from Discord', store.get().source.mode === before.mode);
+check('feed chain unchanged from Discord', store.get().source.rssUrls.join('|') === before.urls);
+// The dump is gone, but the guarantee it used to carry must not come back by
+// some other route: no reply may ever contain the web password.
+check('nothing leaks the web password', !r.content.includes(config.webPassword), r.content.slice(0, 90));
 
+/* --- 5. Discord-side settings still work ----------------------------------- */
 r = await run('!fihas channel set <#100000000000000001>');
 check('channel mention resolved', store.get().channelId === '100000000000000001', r.content);
 r = await run('!fihas channel #general');
@@ -98,7 +121,22 @@ check('paused', store.get().paused === true);
 await run('!fihas resume');
 check('resumed', store.get().paused === false);
 
-/* --- 5. the prefix can change itself ---------------------------------------- */
+// Voice playback is a run control, so both command styles reach it. This guild
+// has no voice channels, which is the "nobody to play to" path.
+r = await run('!fihas play');
+check('play is dispatched', r.content.includes('voice channel'), r.content);
+r = await run('!fihas sound');
+check('"sound" is an alias for play', r.content.includes('voice channel'), r.content);
+r = await run('!fihas play 900');
+check('a bad volume argument is caught', r.content.includes('between'), r.content);
+r = await run('!fihas play loud');
+// A non-numeric argument is not a volume, so it falls back to the saved default
+// rather than refusing to play at all.
+check('a non-numeric volume is ignored, not rejected', r.content.includes('voice channel'), r.content);
+r = await run('!fihas stop');
+check('stop is dispatched', r.content.includes('Nothing is playing'), r.content);
+
+/* --- 6. the prefix can change itself, from either spelling ------------------- */
 // A multi-word prefix must be refused outright, not truncated to "bad".
 r = await run('!fihas set prefix bad prefix');
 check('prefix with a space refused', store.get().prefix === '!fihas', store.get().prefix);
@@ -114,7 +152,7 @@ await run('!f prefix on');
 check('and back on', store.get().prefixEnabled === true);
 await store.update((c) => { c.prefix = '!fihas'; });
 
-/* --- 6. permission gate ------------------------------------------------------ */
+/* --- 7. permission gate ------------------------------------------------------ */
 function fakeMessage(canManage) {
   const replies = [];
   return {
@@ -152,7 +190,7 @@ await prefix.handleMessage(off);
 check('disabled prefix ignores everything', off.replies.length === 0);
 await store.update((c) => { c.prefixEnabled = true; });
 
-/* --- 7. bundled RSSHub helpers ------------------------------------------------ */
+/* --- 8. bundled RSSHub helpers ------------------------------------------------ */
 check('feed url points at the local instance',
   rsshub.localFeedUrl('F_I_H_A_S') === `http://127.0.0.1:${rsshub.port()}/twitter/user/F_I_H_A_S`,
   rsshub.localFeedUrl('F_I_H_A_S'));

@@ -48,6 +48,11 @@ export const DEFAULTS = {
   },
   linkStyle: 'fxtwitter',
   messageTemplate: '{pings} New post from **@{handle}**\n{link}',
+  voice: {
+    // Playback volume as a percentage of the clip as recorded. Discord applies
+    // no gain of its own, so 100 is as loud as the file — which is loud.
+    volume: 60
+  },
   // Text commands, for servers where slash commands never show up.
   prefix: '!fihas',
   prefixEnabled: true,
@@ -87,6 +92,9 @@ export const RSS_LIMITS = {
   maxItems: [1, 100],
   userAgentMaxLength: 200
 };
+// Above 100 is amplification, which clips a clip that is already normalised, so
+// the ceiling is deliberately not much higher than "as recorded".
+export const VOICE_LIMITS = { volume: [0, 200] };
 
 function inRange(value, [min, max]) {
   return Number.isFinite(value) && value >= min && value <= max;
@@ -184,6 +192,11 @@ function applyEnv(config, fresh) {
   });
   seedFromEnv(config, 'RSS_USER_AGENT', (v) => {
     config.source.rss.userAgent = v.slice(0, RSS_LIMITS.userAgentMaxLength);
+  });
+
+  seedFromEnv(config, 'VOICE_VOLUME', (v) => {
+    const parsed = Number.parseInt(v, 10);
+    if (inRange(parsed, VOICE_LIMITS.volume)) config.voice.volume = parsed;
   });
 
   seedFromEnv(config, 'COMMAND_PREFIX', (v) => {

@@ -21,6 +21,10 @@ services:
       RSS_TIMEOUT_SECONDS: ${RSS_TIMEOUT_SECONDS:-}
       RSS_MAX_ITEMS: ${RSS_MAX_ITEMS:-}
       RSS_USER_AGENT: ${RSS_USER_AGENT:-}
+      # Volume for /fihas play, as a percentage of the clip as recorded.
+      # Blank on purpose: it is edited under "Voice playback" in the web UI, and
+      # a value set here is re-applied whenever you change it.
+      VOICE_VOLUME: ${VOICE_VOLUME:-}
       # Text commands, for servers where /fihas never shows up. Needs the
       # Message Content intent enabled in the Discord Developer Portal.
       COMMAND_PREFIX: ${COMMAND_PREFIX:-!fihas}

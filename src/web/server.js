@@ -14,10 +14,12 @@ import {
   HANDLE_RE,
   PREFIX_RE,
   RSS_LIMITS,
+  VOICE_LIMITS,
   AUTH_TOKEN_RE
 } from '../store.js';
 import * as poller from '../poller.js';
 import * as rsshub from '../rsshub.js';
+import * as voice from '../voice.js';
 import * as xapi from '../sources/xapi.js';
 import * as rss from '../sources/rss.js';
 import { runtime } from '../runtime.js';
@@ -182,6 +184,8 @@ function publicState() {
     feedPresets: feedPresets(config.handle),
     rssLimits: RSS_LIMITS,
     rssDefaultUserAgent: rss.DEFAULT_USER_AGENT,
+    // Whether the clip shipped in this image, and what it is currently doing.
+    voice: { ...voice.status(config.guildId), clip: voice.clipName(), limits: VOICE_LIMITS },
     // 'active' | 'denied' | 'off' — whether prefix commands can read message text.
     messageIntent: runtime.messageIntent,
     // Why Discord is unreachable, when it is. The UI surfaces this because the
@@ -201,6 +205,7 @@ function publicState() {
       filters: config.filters,
       linkStyle: config.linkStyle,
       messageTemplate: config.messageTemplate,
+      voice: config.voice,
       prefix: config.prefix,
       prefixEnabled: config.prefixEnabled,
       setupCompleted: config.setupCompleted,
@@ -370,6 +375,18 @@ async function applyPatch(patch) {
       else if (template.length > 1500) errors.push('Template is too long.');
       else if (!template.includes('{link}')) errors.push('Template must include {link}.');
       else c.messageTemplate = template;
+    }
+
+    if (patch.voiceVolume !== undefined) {
+      const [min, max] = VOICE_LIMITS.volume;
+      const level = Number.parseInt(patch.voiceVolume, 10);
+      if (!Number.isFinite(level) || level < min || level > max) {
+        errors.push(`Playback volume must be between ${min} and ${max}.`);
+      } else {
+        // Takes effect on the next play; a clip already in flight keeps the
+        // gain it started with.
+        c.voice.volume = level;
+      }
     }
 
     if (patch.prefix !== undefined) {

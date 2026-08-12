@@ -112,6 +112,21 @@ check('prefix settings editable', r.status === 200
   && r.json.state.config.prefix === '!f' && r.json.state.config.prefixEnabled === false);
 await req('/api/config', { method: 'POST', body: { prefix: '!fihas', prefixEnabled: true } });
 
+/* --- 6c. playback volume is a server setting, so the API owns it -------------- */
+r = await req('/api/config', { method: 'POST', body: { voiceVolume: 35 } });
+check('playback volume editable', r.status === 200 && r.json.state.config.voice.volume === 35,
+  JSON.stringify(r.json.state.config.voice));
+r = await req('/api/config', { method: 'POST', body: { voiceVolume: 900 } });
+check('out-of-range volume rejected', r.status === 400, `got ${r.status}`);
+r = await req('/api/config', { method: 'POST', body: { voiceVolume: 'loud' } });
+check('non-numeric volume rejected', r.status === 400, `got ${r.status}`);
+r = await req('/api/state');
+check('rejected volume left the saved one alone', r.json.config.voice.volume === 35,
+  String(r.json.config.voice.volume));
+check('state tells the UI whether a clip shipped and its limits',
+  typeof r.json.voice.available === 'boolean' && Array.isArray(r.json.voice.limits?.volume),
+  JSON.stringify(r.json.voice));
+
 /* --- 7. valid config patch ------------------------------------------------------ */
 r = await req('/api/config', { method: 'POST', body: {
   guildId: 'g1', channelId: 'c1', pings: [{ type: 'role', id: '4444444444' }],
