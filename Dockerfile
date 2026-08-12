@@ -5,14 +5,16 @@
 ARG RSSHUB_IMAGE=diygod/rsshub:latest
 
 # ---------------------------------------------------------------- bot deps ---
-# Every dependency is pure JavaScript, so they can be installed on a small image
-# and copied into the RSSHub base below — no native rebuild needed. That rules
-# out @discordjs/opus and sodium-native for voice: musl-built addons will not
-# load on the glibc base. opusscript and libsodium-wrappers are the portable
-# equivalents, and ffmpeg-static ships a statically linked binary that runs on
-# either libc.
+# Dependencies are installed here and copied wholesale into the RSSHub base
+# below, so this stage MUST use the same libc as that base — glibc, i.e. a
+# -slim/Debian image and never Alpine. npm picks native builds by platform at
+# install time: @discordjs/voice pulls in @snazzah/davey (Discord's DAVE voice
+# encryption), which is a compiled addon, and on Alpine npm resolves its musl
+# variant. Copied onto glibc that binary does not exist under the name the
+# loader wants and the bot dies on import, before it can even log why.
+# The addons are all N-API, so the Node version here need not match the base.
 # `npm ci` (not install) so CI builds match the committed lockfile exactly.
-FROM node:20-alpine AS botdeps
+FROM node:22-bookworm-slim AS botdeps
 WORKDIR /bot
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
@@ -43,6 +45,20 @@ COPY F_I_H_A_S_audio.mp3 ./F_I_H_A_S_audio.mp3
 RUN node -e "const {isBundled,entrypoint}=await import('/bot/src/rsshub.js'); \
   if(!isBundled()){console.error('RSSHub entrypoint not found under /app — update ENTRY_CANDIDATES in src/rsshub.js');process.exit(1);} \
   console.log('bundled RSSHub entrypoint:', entrypoint());" --input-type=module
+
+# Voice is the part that breaks silently when the build platform and this base
+# disagree: davey is a compiled addon picked by libc at install time, opusscript
+# is only loaded when someone actually plays something, and ffmpeg is a
+# downloaded binary that has to match this architecture. Exercising all three
+# here turns a crash loop at startup into a failed build.
+RUN node -e "await import('/bot/src/voice.js'); \
+  const {createRequire}=await import('node:module'); \
+  const req=createRequire('/bot/package.json'); \
+  req('opusscript'); \
+  const ffmpeg=req('ffmpeg-static'); \
+  const {execFileSync}=await import('node:child_process'); \
+  execFileSync(ffmpeg,['-version'],{stdio:'ignore'}); \
+  console.log('voice stack loads, ffmpeg at', ffmpeg);" --input-type=module
 
 # TZ is set because the RSSHub base image defaults it to Asia/Shanghai.
 ENV NODE_ENV=production \

@@ -34,7 +34,16 @@
     The setup UI is password protected. Set "Setup UI Password" below, or leave it blank
     and a password is generated and printed in the container log on first start.
 
-    Config persists in /config so it survives updates and restarts.
+    Config persists in /config so it survives updates and restarts. The Discord token,
+    Application ID and Server ID are mirrored there too, so if this template ever gets
+    re-applied and blanks those fields, the bot keeps running on the saved copy instead
+    of dropping offline. A field with a value in it always wins, so rotating a token
+    still works exactly as you would expect.
+
+    AFTER YOU HIT APPLY, delete fihas-bot.xml from
+    /boot/config/plugins/dockerMan/templates-user/ and keep only my-FIHAS-Bot.xml.
+    Both files declare the same container name, and leaving this one behind is what
+    lets an Apply or Force Update reset your settings to the defaults below.
   </Overview>
   <Category>Tools: Social:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>

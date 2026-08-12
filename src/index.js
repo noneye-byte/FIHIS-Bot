@@ -10,12 +10,14 @@ import { command, handle as handleCommand } from './commands.js';
 import { handleMessage } from './prefix.js';
 import { setMessageIntent, setFault } from './runtime.js';
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const HEALTH_PORT = Number.parseInt(process.env.HEALTH_PORT || '8080', 10);
 
 const config = await store.load();
+
+// Read after load(), not from the environment directly: a container variable
+// wins when it has a value, but a blank one falls back to the copy saved in
+// /config so a re-applied template cannot log the bot out. See store.js.
+const { token: TOKEN, clientId: CLIENT_ID, guildId: GUILD_ID } = store.credentials();
 
 /* ------------------------------------------------------------ bundled rsshub */
 

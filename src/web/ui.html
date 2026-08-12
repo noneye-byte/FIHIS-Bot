@@ -272,6 +272,14 @@ async function refresh() {
     $('hdrsub').innerHTML +=
       '<br><span style="color:var(--bad)">/config is not writable — settings will be lost on' +
       ' restart. Check the host path mapped to /config.</span>';
+  } else if (S.credentialsRestored?.length) {
+    // The bot is running normally — this explains why, so a blanked template
+    // does not look like the bot silently ignoring what was typed into it.
+    $('hdrsub').innerHTML +=
+      `<br><span style="color:var(--warn)">${S.credentialsRestored.map(esc).join(' and ')} ` +
+      (S.credentialsRestored.length > 1 ? 'are' : 'is') +
+      ' blank on the container, so the copy saved in <code>/config</code> is being used instead.' +
+      ' Your container template was probably re-applied and cleared it. Nothing to re-enter.</span>';
   } else if (S.configFresh) {
     // Normal on a first run, and the one visible symptom of a /config mapping
     // that does not survive the container being recreated.

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as rsshub from './rsshub.js';
-import { setConfigReadOnly, setConfigFresh } from './runtime.js';
+import { setConfigReadOnly, setConfigFresh, setCredentialsRestored } from './runtime.js';
 
 const CONFIG_DIR = process.env.CONFIG_DIR || '/config';
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
@@ -56,6 +56,12 @@ export const DEFAULTS = {
   // Text commands, for servers where slash commands never show up.
   prefix: '!fihas',
   prefixEnabled: true,
+  // Discord credentials, mirrored here from the container variables so that
+  // re-applying a container template — which blanks every field back to its
+  // default — cannot take the bot offline. See applyCredentials().
+  discordToken: '',
+  discordClientId: '',
+  discordGuildId: '',
   // web setup wizard
   guildId: null,
   setupCompleted: false,
@@ -207,6 +213,52 @@ function applyEnv(config, fresh) {
   });
 }
 
+/** Container variable -> where its value is mirrored in the config. */
+const CREDENTIALS = [
+  ['DISCORD_TOKEN', 'discordToken'],
+  ['DISCORD_CLIENT_ID', 'discordClientId'],
+  ['DISCORD_GUILD_ID', 'discordGuildId']
+];
+
+/**
+ * Keeps the Discord credentials alive across a container that forgets them.
+ *
+ * On Unraid these live only in the container template, and the template is the
+ * one thing the bot has no say over: an Apply, a Force Update, or a stray
+ * pristine `fihas-bot.xml` sitting next to `my-FIHAS-Bot.xml` in
+ * templates-user/ can reset every field to its default and hand back a
+ * container with a blank token. Nothing in /config was wrong; the bot simply
+ * had no way to log in any more, and the only fix was typing the token in
+ * again.
+ *
+ * So the variables are mirrored into /config, which is a separate volume and
+ * survives all of that. A variable that has a value still wins outright — that
+ * is how you change a token — but a blank one is now answered from the saved
+ * copy instead of taking the bot offline.
+ *
+ * @returns {string[]} the variables that had to be answered from /config
+ */
+function applyCredentials(config) {
+  const restored = [];
+  for (const [name, key] of CREDENTIALS) {
+    const fromEnv = (process.env[name] ?? '').trim();
+    if (fromEnv) config[key] = fromEnv;
+    else if (config[key]) restored.push(name);
+  }
+  setCredentialsRestored(restored);
+  return restored;
+}
+
+/** What the bot should log in with: the container's value, or the saved one. */
+export function credentials() {
+  const config = get();
+  return {
+    token: config.discordToken || null,
+    clientId: config.discordClientId || null,
+    guildId: config.discordGuildId || null
+  };
+}
+
 export async function load() {
   if (cache) return cache;
   await fs.mkdir(CONFIG_DIR, { recursive: true });
@@ -234,6 +286,17 @@ export async function load() {
   }
 
   applyEnv(cache, fresh);
+
+  const restored = applyCredentials(cache);
+  if (restored.length) {
+    console.warn(
+      `[store] ${restored.join(' and ')} ${restored.length > 1 ? 'are' : 'is'} blank on this container — using the copy saved in ${CONFIG_PATH}.\n` +
+        '  That normally means the container template was re-applied and cleared what you typed\n' +
+        '  into it. The bot carries on with the saved credentials, so nothing needs re-entering.\n' +
+        '  On Unraid this is usually a leftover pristine fihas-bot.xml in templates-user/ — delete\n' +
+        '  it and keep only my-FIHAS-Bot.xml.'
+    );
+  }
 
   // The setup UI is reachable on the LAN, so it always needs a password. If the
   // admin did not pick one we generate it and print it to the container log,

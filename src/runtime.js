@@ -31,7 +31,17 @@ export const runtime = {
    * on a first run; on any later one it means /config is not the persistent
    * path the previous container wrote to.
    */
-  configFresh: false
+  configFresh: false,
+
+  /**
+   * Container variables that were blank at boot and answered from the saved
+   * copy in /config instead — e.g. ['DISCORD_TOKEN'].
+   *
+   * Non-empty almost always means the container template was re-applied and
+   * wiped what was typed into it. The bot carries on with the saved credentials
+   * rather than dropping offline, and says so here so the cause is visible.
+   */
+  credentialsRestored: []
 };
 
 export function setMessageIntent(value) {
@@ -48,4 +58,8 @@ export function setConfigReadOnly(value) {
 
 export function setConfigFresh(value) {
   runtime.configFresh = Boolean(value);
+}
+
+export function setCredentialsRestored(names) {
+  runtime.credentialsRestored = [...names];
 }

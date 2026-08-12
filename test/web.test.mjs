@@ -3,6 +3,10 @@ import { check, tmpConfigDir, finish } from './_harness.mjs';
 
 process.env.CONFIG_DIR = tmpConfigDir();
 process.env.DISCORD_CLIENT_ID = '123456789012345678';
+// Mirrored into /config so a re-applied container template cannot blank it —
+// which makes it a secret living in the config, and it must never come back out
+// of the API the way the client id legitimately does.
+process.env.DISCORD_TOKEN = 'super-secret-bot-token';
 
 const store = await import('../src/store.js');
 const web = await import('../src/web/server.js');
@@ -100,6 +104,12 @@ check('@everyone role excluded', !g.roles.some((x) => x.id === 'g1'));
 check('managed role excluded', !g.roles.some((x) => x.id === 'r2'));
 check('normal role present', g.roles.some((x) => x.id === 'r1'));
 check('password never exposed in state', !JSON.stringify(r.json).includes(PASSWORD));
+check('bot token never exposed in state',
+  !JSON.stringify(r.json).includes('super-secret-bot-token'));
+check('state reports only whether a token is known', r.json.hasDiscordToken === true);
+check('the client id still reaches the UI, for the invite link',
+  r.json.clientId === '123456789012345678', String(r.json.clientId));
+check('state carries which credentials were restored', Array.isArray(r.json.credentialsRestored));
 check('state carries the prefix settings',
   r.json.config.prefix === '!fihas' && r.json.config.prefixEnabled === true);
 check('state reports the message intent', typeof r.json.messageIntent === 'string', r.json.messageIntent);

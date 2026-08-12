@@ -268,19 +268,28 @@ Put it on the Unraid box at:
 Then **Docker** tab → **Add Container** → pick **FIHAS-Bot** from the *Template* dropdown at the top.
 Every field below is pre-filled with sensible defaults; you only have to supply the two Discord values.
 
-> **Then delete `fihas-bot.xml`.** Once you have hit Apply, Unraid has written your real settings to
-> `my-FIHAS-Bot.xml` in that same directory, and both files now claim `<Name>FIHAS-Bot</Name>`.
-> Leaving the pristine one there means an **Apply** or **Force Update** can pick it up instead of
-> yours and hand you a container with every field back at its default — blank token, port back to
-> `8080`, appdata path back to `/mnt/user/appdata/fihas-bot`. Delete it and updates keep your
-> settings:
->
-> ```sh
-> rm /boot/config/plugins/dockerMan/templates-user/fihas-bot.xml
-> ls /boot/config/plugins/dockerMan/templates-user/   # only my-FIHAS-Bot.xml should remain
-> ```
->
-> Re-adding the template later is only ever needed to install the container again from scratch.
+### 1b. Delete the template again — this step is not optional
+
+Once you hit Apply, Unraid writes your real settings to `my-FIHAS-Bot.xml` in that same directory,
+and **both files now claim `<Name>FIHAS-Bot</Name>`**. Leaving the pristine one there means an
+**Apply** or a **Force Update** can pick it up instead of yours and hand back a container with every
+field at its default — blank token, port back to `8080`, appdata path back to
+`/mnt/user/appdata/fihas-bot`:
+
+```sh
+rm /boot/config/plugins/dockerMan/templates-user/fihas-bot.xml
+ls /boot/config/plugins/dockerMan/templates-user/   # only my-FIHAS-Bot.xml should remain
+```
+
+Re-adding the template is only ever needed to install the container again from scratch.
+
+> **If this already happened to you, your credentials are not gone.** From v2.0.1 the bot mirrors
+> `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `DISCORD_GUILD_ID` into `/config`, which is a different
+> volume and survives a template reset. A variable that has a value still wins — that is how you
+> rotate a token — but a **blank** one is answered from the saved copy instead of taking the bot
+> offline. The container log and the web UI both say when that happens, so it stays visible rather
+> than looking like the bot ignoring your settings. It cannot save you if the *appdata path itself*
+> gets reset to somewhere empty, so the deletion above still matters.
 
 Prefer not to use the template? **Add Container** → toggle **Advanced View** and enter the settings
 from the reference table manually.

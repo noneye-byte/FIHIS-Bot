@@ -175,7 +175,12 @@ function publicState() {
     connected: Boolean(client?.isReady()),
     botTag: client?.user?.tag ?? null,
     botAvatar: client?.user?.displayAvatarURL({ size: 128 }) ?? null,
-    clientId: process.env.DISCORD_CLIENT_ID ?? null,
+    // From the store, not the environment, so the invite link still builds
+    // after a container template reset blanked the variable. The token itself
+    // is never sent to the browser — only whether one is known.
+    clientId: config.discordClientId || null,
+    hasDiscordToken: Boolean(config.discordToken),
+    credentialsRestored: runtime.credentialsRestored,
     hasXToken: Boolean(process.env.X_BEARER_TOKEN),
     guilds: collectGuilds(),
     poller: poller.status(),

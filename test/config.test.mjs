@@ -82,4 +82,56 @@ check('a new handle clears the seen list rather than dumping a backlog',
   config.bootstrapped === false && config.seen.length === 0,
   `${config.bootstrapped} / ${config.seen.length}`);
 
+/* --- 8. credentials outlive a container that forgets them --------------------
+   The Discord token lives only in the container template, and re-applying a
+   template resets every field to its default. That used to mean a blank token
+   and a bot that could not log in until it was typed in by hand. */
+const { runtime } = await import('../src/runtime.js');
+
+process.env.DISCORD_TOKEN = 'tok-original';
+process.env.DISCORD_CLIENT_ID = '123456789012345678';
+process.env.DISCORD_GUILD_ID = '987654321098765432';
+({ store, config } = await boot());
+check('credentials from the container are mirrored into the config',
+  config.discordToken === 'tok-original' && config.discordClientId === '123456789012345678',
+  `${config.discordToken} / ${config.discordClientId}`);
+check('nothing is reported as restored while the variables are set',
+  runtime.credentialsRestored.length === 0, JSON.stringify(runtime.credentialsRestored));
+
+// The template gets re-applied and hands back a container with empty fields.
+process.env.DISCORD_TOKEN = '';
+process.env.DISCORD_CLIENT_ID = '';
+process.env.DISCORD_GUILD_ID = '';
+({ store, config } = await boot());
+check('a wiped token falls back to the saved copy',
+  store.credentials().token === 'tok-original', String(store.credentials().token));
+check('so does the client id', store.credentials().clientId === '123456789012345678');
+check('so does the guild id', store.credentials().guildId === '987654321098765432');
+check('and the reason is recorded for the log and the UI',
+  runtime.credentialsRestored.join() === 'DISCORD_TOKEN,DISCORD_CLIENT_ID,DISCORD_GUILD_ID',
+  JSON.stringify(runtime.credentialsRestored));
+note('this is the regression: a re-applied Unraid template used to blank the token');
+
+// Rotating the token still has to work — a variable with a value always wins.
+process.env.DISCORD_TOKEN = 'tok-rotated';
+({ store, config } = await boot());
+check('a new token in the container replaces the saved one',
+  store.credentials().token === 'tok-rotated', String(store.credentials().token));
+check('the replacement is persisted for the next boot', config.discordToken === 'tok-rotated');
+check('only the still-blank variables count as restored',
+  runtime.credentialsRestored.join() === 'DISCORD_CLIENT_ID,DISCORD_GUILD_ID',
+  JSON.stringify(runtime.credentialsRestored));
+
+// A genuinely first-ever boot with nothing set must not claim it restored
+// anything — that message would send someone hunting a problem they don't have.
+delete process.env.DISCORD_TOKEN;
+delete process.env.DISCORD_CLIENT_ID;
+delete process.env.DISCORD_GUILD_ID;
+process.env.CONFIG_DIR = tmpConfigDir();
+({ store, config } = await boot());
+check('a first boot with no credentials anywhere reports none restored',
+  runtime.credentialsRestored.length === 0, JSON.stringify(runtime.credentialsRestored));
+check('and hands back nulls rather than empty strings',
+  store.credentials().token === null && store.credentials().clientId === null);
+
 finish();
